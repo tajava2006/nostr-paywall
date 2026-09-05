@@ -687,7 +687,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 |---|---|---|
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
-| M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | 테스트 민트로 e2e 1건 |
+| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **collector 완료**(유닛 25 + 라이브 스모크). 남은 것: guard 배선 + repo |
 | M3 | `client` PaidPool + `float`(NWC 충전 → 1sat 지출 → 환불) | CLI로 유료 발행 1건 + 잔액 환불 1건 |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
@@ -710,6 +710,24 @@ NIP-22 웹URL 코멘트 무료 vs 이벤트 코멘트 과금, 대문자 `E`/`P` 
 `spliceEnvelope`가 `encodeEventMessage`와 바이트 동일, 환불이 접두사보다 우선.
 
 작성 중 실제 버그 1건을 테스트가 잡았다: 환불 응답의 사람용 `message`에 기계용 토큰이 딸려 들어갔다.
+
+### M2 진행 (2026-09-05) — collector 완료
+
+`packages/collectors` — 유닛 25 green + `scripts/smoke-cashu.ts` 라이브 왕복 통과.
+
+- `mint-policy.ts` — **부팅 게이트**. allowlist 민트의 활성 sat 키셋 `input_fee_ppk` 를 읽어
+  0이 아니면 **던져서 릴레이를 못 띄운다**(D13). 이게 없으면 유저 돈만 받고 수납은 실패하는
+  상태로 조용히 굴러간다.
+- `cashu.ts` — `validate`(돈 안 건드림) / `collect`(swap) 분리. §3.4 순서가 여기서 강제된다.
+
+구현하며 나온 것 2건:
+
+1. **봉투의 `mint` 필드만 믿으면 뚫린다.** allowlist 민트를 자칭하면서 다른 민트 토큰을 실을 수
+   있으므로 **디코드한 토큰 안의 `mint`** 로 판정한다.
+2. **`getEncodedToken` 은 keyset id 형식을 검증하고 던진다.** 환불 토큰을 만들다 터지면
+   *이미 돈을 받은 뒤*라 §3.4-7 환불 경로가 통째로 죽는다 → 삼키고 `refundToken: null`.
+   대신 `CollectResult.proofs` 로 원물을 항상 넘긴다.
+   **릴레이는 이 proofs 를 반드시 영구 저장해야 한다** — 베어러라 재시작 한 번에 전부 잃는다.
 
 ### 데모(M4) 설계
 
