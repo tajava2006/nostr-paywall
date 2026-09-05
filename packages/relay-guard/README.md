@@ -2,6 +2,12 @@
 
 유료 nostr 릴레이의 **결제 원장과 가드**. `node:sqlite` 라 네이티브 의존성 0.
 
+> ⚠️ **Node 22.5+ 필요** (`node:sqlite` 내장 시점). **24 이상 권장** — 그보다 낮으면
+> `--experimental-sqlite` 플래그가 필요하다. 버전이 낮으면 부팅 시
+> `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite` 로 죽는다.
+> pm2/systemd 로 돌린다면 **그 데몬이 쓰는 Node 버전**을 확인할 것 — 셸에서 바꿔도
+> 데몬이 옛 버전으로 떠 있으면 자식 프로세스도 옛 버전을 물려받는다.
+
 ```ts
 import { PaymentGuard, SqlitePaymentRepository } from '@nostr-paywall/relay-guard';
 

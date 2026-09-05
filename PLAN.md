@@ -685,7 +685,18 @@ nostr-tools를 **직접** 쓰는 클라에겐 진짜 드랍인이다. 다만 생
    재발행이 `[E409] Cannot publish over previously staged version` 로 막힌다.
    → 번호를 올려서 다시 올리는 수밖에 없다(0.1.1 → 0.1.2).
 4. 부분 발행이 나면 **의존 패키지가 존재하지 않는 버전을 가리켜 설치가 통째로 깨진다**
-   (`ETARGET`). 발행 후엔 반드시 클린룸 `npm i` 로 확인할 것.
+   (`ETARGET`). 발행 후엔 반드시 `pnpm verify-publish` 로 확인할 것
+   (내부 의존성 존재 확인 + 클린룸 `npm i`).
+   ⚠️ `npm view` 는 전파 지연으로 옛 버전을 보여줄 수 있다 — 그것만 보고 판단하지 말 것.
+
+### 운영 함정 — Node 버전
+
+`relay-guard` 는 `node:sqlite`(Node 22.5+ 내장, 24부터 무플래그)를 쓴다. 낮으면 부팅 시
+`ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite` 로 죽는다.
+
+⚠️ **pm2/systemd 로 돌리면 셸의 Node 버전과 데몬의 Node 버전이 다르다.** 셸에서 nvm 으로
+올려도 데몬이 옛 버전으로 떠 있으면 자식 프로세스가 옛 버전을 물려받는다(2026-09-05 실제로 겪음).
+→ `pm2 kill` 로 데몬을 죽였다 새로 띄우거나 `interpreter` 로 못 박을 것. `nvm alias default` 도 같이.
 
 
 ```

@@ -1,6 +1,6 @@
 {
   "name": "@nostr-paywall/protocol",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "이벤트 단위 유료 nostr 릴레이 — 과금 술어·NIP-11 파서·EVENT 봉투·OK 규약. 릴레이와 클라가 공유하는 순수 로직.",
   "keywords": [
     "nostr",
@@ -11,7 +11,11 @@
     "cashu"
   ],
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
   "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
@@ -42,6 +46,5 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/protocol",
     "prepublishOnly": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/protocol"
-  },
-  "module": "./dist/esm/index.js"
+  }
 }
