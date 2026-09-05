@@ -687,7 +687,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 |---|---|---|
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
-| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **collector·원장 완료**(유닛 40 + 라이브 스모크). 남은 것: guard 조립 + 릴레이 배선 |
+| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **순수 로직 완료**(유닛 111 + 라이브 스모크). 남은 것: 릴레이 포크 배선뿐 |
 | M3 | `client` PaidPool + `float`(NWC 충전 → 1sat 지출 → 환불) | CLI로 유료 발행 1건 + 잔액 환불 1건 |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
@@ -746,6 +746,24 @@ swap 이 한쪽을 죽인다. 원장은 낭비를 줄이고 멱등을 정확히 
 ⚠️ 도구 함정: **`node:sqlite` 는 prefix-only 빌트인**이다(`builtinModules` 에 `'sqlite'` 없이
 `'node:sqlite'` 로만 있음). Vite 가 `node:` 를 떼고 조회해 `Failed to load url sqlite` 로 죽는다.
 vitest 5 에서 해결됨 — 그보다 낮은 버전은 이 패키지를 못 돌린다.
+
+### M2 진행 (2026-09-05) — guard 조립 완료, 순수 로직 끝
+
+`PaymentGuard` 는 **훅 비의존**이다 — `@nostr-relay/*` 를 import 하지 않아 어느 릴레이 구현에도
+얹히고 유닛 테스트도 릴레이 없이 돈다. 특정 훅에 맞추는 건 얇은 어댑터 몫.
+
+§3.4 의 "순서가 곧 안전장치"를 **호출 추적으로 못박았다**:
+- validate 가 거부하면 `collect` 가 **안 불린다**
+- 이중사용(conflict)이면 `collect` 가 **안 불린다**
+- 이미 낸 이벤트를 다시 보내면 `collect` 가 **안 불린다**(재과금 0)
+
+돈은 받았는데 실패하는 두 경로도 코드로 닫았다:
+- **원장 기록 실패** → 성공이라 우기지 않고 손에 있는 환불 토큰을 즉시 돌려준다
+- **환불 토큰조차 못 만듦** → 정직하게 알린다. 삼키면 유저는 영문도 모르고 잃는다
+- **저장 실패**(`onStorageFailed`) → 환불 토큰 + 원장 failed. 이 경로가 없으면 §3.4-7 이 말뿐이 된다
+
+`rate-limited` 접두사 추가: 같은 이벤트 결제가 처리 중일 때 `payment-invalid` 를 쓰면
+"이 봉투로 재시도하지 마라"는 **잘못된 신호**가 된다. 봉투엔 문제가 없고 잠시 후 재시도가 맞다.
 
 ### 데모(M4) 설계
 

@@ -13,6 +13,8 @@ export const PREFIX_PAYMENT_REQUIRED = 'payment-required';
 export const PREFIX_PAYMENT_INVALID = 'payment-invalid';
 export const PREFIX_DUPLICATE = 'duplicate';
 export const PREFIX_ERROR = 'error';
+/** NIP-01 표준 접두사. 재시도해도 되는 거절에 쓴다. */
+export const PREFIX_RATE_LIMITED = 'rate-limited';
 
 /** 저장 실패로 수납한 돈을 돌려줄 때 쓰는 키. OK 메시지가 유일한 반환 채널이다. */
 export const REFUND_KEY = 'refund=';
@@ -29,6 +31,16 @@ export function okPaymentInvalid(humanReason: string): string {
 
 export function okDuplicate(): string {
   return `${PREFIX_DUPLICATE}: already have this event`;
+}
+
+/**
+ * 같은 이벤트의 결제가 이미 처리 중일 때.
+ *
+ * `payment-invalid` 를 쓰면 안 된다 — 그건 "이 봉투로 재시도하지 마라"는 뜻인데
+ * 여기선 봉투에 아무 문제가 없다. 잠시 후 재시도가 맞으므로 `rate-limited` 다.
+ */
+export function okInProgress(): string {
+  return `${PREFIX_RATE_LIMITED}: payment for this event is already in progress`;
 }
 
 /**

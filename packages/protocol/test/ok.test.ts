@@ -7,6 +7,7 @@ import {
   okDuplicate,
   okPaymentInvalid,
   okPaymentRequired,
+  okInProgress,
   okRefund,
   parseOkReason,
 } from '../src/ok.js';
@@ -30,6 +31,12 @@ describe('왕복', () => {
 
   it('duplicate 는 accepted=true 로 온다 (NIP-01) — 무과금 통과이자 재시도의 정상 종착지', () => {
     expect(parseOkReason(true, okDuplicate())).toEqual({ kind: 'duplicate' });
+  });
+
+  it('처리 중은 rate-limited — payment-invalid 를 쓰면 "재시도 말라"는 잘못된 신호가 된다', () => {
+    const out = parseOkReason(false, okInProgress());
+    expect(out.kind).toBe('rejected');
+    if (out.kind === 'rejected') expect(out.prefix).toBe('rate-limited');
   });
 
   it('환불', () => {
