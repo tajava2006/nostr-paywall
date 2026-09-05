@@ -53,6 +53,9 @@
     "@nostr-paywall/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^24.13.3"
+    "@types/node": "^24.13.3",
+    "@types/ws": "^8.18.1",
+    "nostr-tools": "^2.25.2",
+    "ws": "^8.21.3"
   }
 }

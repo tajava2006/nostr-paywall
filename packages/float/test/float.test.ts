@@ -200,3 +200,51 @@ describe('pickMint — 앱이 신뢰하는 민트만', () => {
     expect(pickMint({ rules: [], methods: [{ type: 'ln-keysend' }], envelopeInEventMessage: true } as never)).toBeNull();
   });
 });
+
+describe('라이트닝 주소 (LUD-16) — 환불 금액을 우리가 정할 수 있게 하는 장치', () => {
+  it('주소를 LUD-16 엔드포인트로 바꾼다', async () => {
+    const { lightningAddressToUrl } = await import('../src/lnurl.js');
+    expect(lightningAddressToUrl('hoppe@example.com')).toBe(
+      'https://example.com/.well-known/lnurlp/hoppe',
+    );
+    expect(lightningAddressToUrl('a@b.onion')).toBe('http://b.onion/.well-known/lnurlp/a');
+  });
+
+  it('대문자·잘못된 주소는 거부한다 (LUD-16 은 소문자만)', async () => {
+    const { lightningAddressToUrl } = await import('../src/lnurl.js');
+    expect(() => lightningAddressToUrl('Hoppe@example.com')).toThrow();
+    expect(() => lightningAddressToUrl('nope')).toThrow();
+  });
+
+  it('서버가 죽었을 때 진단 가능한 메시지를 준다', async () => {
+    // 그냥 res.json() 이면 `Unexpected token '<'` 만 나와 원인을 못 찾는다(실제로 겪음).
+    const { resolveLightningAddress } = await import('../src/lnurl.js');
+    const fetchImpl = (async () => ({
+      ok: false,
+      status: 502,
+      json: async () => ({}),
+      text: async () => '<html>502 Bad Gateway</html>',
+    })) as never;
+    await expect(resolveLightningAddress('a@b.com', fetchImpl)).rejects.toThrow(/HTTP 502/);
+  });
+
+  it('예산에 맞을 때까지 금액을 깎아 수렴한다 — melt 수수료를 미리 알 수 없으므로', async () => {
+    const { findAffordableAmount } = await import('../src/lnurl.js');
+    // 수수료 = 금액의 10% 라고 하면, 예산 17 에서 보낼 수 있는 건 15 (15+2=17)
+    const found = await findAffordableAmount(17, async (sats) => ({
+      neededSats: sats + Math.ceil(sats * 0.1),
+      quote: sats,
+    }));
+    expect(found).not.toBeNull();
+    expect(found!.neededSats).toBeLessThanOrEqual(17);
+  });
+
+  it('수수료도 못 감당하면 null — 억지로 보내지 않는다', async () => {
+    const { findAffordableAmount } = await import('../src/lnurl.js');
+    const found = await findAffordableAmount(1, async (sats) => ({
+      neededSats: sats + 100,
+      quote: null,
+    }));
+    expect(found).toBeNull();
+  });
+});

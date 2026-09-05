@@ -7,6 +7,7 @@
 import type { Proof } from '@cashu/cashu-ts';
 import type { PaymentEnvelope } from '@nostr-paywall/protocol';
 import { createLock, type FloatLock } from './lock.js';
+import { findAffordableAmount, requestInvoice, resolveLightningAddress } from './lnurl.js';
 import {
   emptyState,
   type FloatState,
@@ -255,8 +256,62 @@ export class EcashFloat {
   // ─── 환불 ──────────────────────────────────────────────────────
 
   /**
+   * 남은 ecash 를 **라이트닝 주소**로 되돌린다 (LUD-16 → NUT-05 melt).
+   *
+   * `makeInvoice` 보다 이쪽이 낫다: melt 는 금액이 박힌 bolt11 을 요구하는데
+   * 얼마짜리를 만들지는 melt 견적을 받아봐야 안다(수수료 예약분 때문). 유저에게
+   * 물어도 유저가 모르는 그 문제를, 라이트닝 주소면 **우리가 금액을 정해 인보이스를
+   * 뽑을 수 있어서** 반복으로 수렴시킬 수 있다.
+   *
+   * pending 은 건드리지 않는다 — 먼저 `reconcile()` 로 정리할 것.
+   */
+  async refundToLightningAddress(
+    address: string,
+  ): Promise<{ mint: string; sentSats: number; feeSats: number }[]> {
+    const params = await resolveLightningAddress(address);
+    const state = (await this.opts.store.load()) ?? emptyState();
+    const out: { mint: string; sentSats: number; feeSats: number }[] = [];
+
+    for (const [mint, b] of Object.entries(state.mints)) {
+      const total = sats(b.proofs);
+      if (total < 2) continue; // 수수료도 안 되는 잔액
+
+      const { Wallet } = await cashu();
+      const wallet = new Wallet(mint);
+      await wallet.loadMint();
+
+      const found = await findAffordableAmount(total, async (send) => {
+        const invoice = await requestInvoice(params, send);
+        const quote = await wallet.createMeltQuoteBolt11(invoice);
+        const needed = Number(quote.amount) + Number(quote.fee_reserve ?? 0);
+        return { neededSats: needed, quote };
+      });
+      if (!found) continue;
+
+      const quote = found.quote as Awaited<ReturnType<typeof wallet.createMeltQuoteBolt11>>;
+      const { keep, send } = await wallet.send(found.neededSats, b.proofs);
+      const res = await wallet.meltProofsBolt11(quote, send);
+
+      // NUT-08: 안 쓴 수수료 예약분이 change 로 돌아온다. 버리면 그대로 손해다.
+      const change = (res as { change?: Proof[] }).change ?? [];
+      await this.mutate(async (s) => {
+        const bb = bucket(s, mint);
+        bb.proofs = [...(keep as Proof[]), ...change];
+      });
+
+      out.push({
+        mint,
+        sentSats: found.sendSats,
+        feeSats: found.neededSats - found.sendSats - sats(change),
+      });
+    }
+    return out;
+  }
+
+  /**
    * 남은 ecash 를 유저 지갑으로 되돌린다 (NUT-05 melt → `funding.makeInvoice`).
    *
+   * 금액을 우리가 못 정하므로 `refundToLightningAddress` 쪽이 낫다.
    * pending 은 건드리지 않는다 — 먼저 `reconcile()` 로 정리할 것.
    */
   async refundAll(): Promise<{ mint: string; sats: number }[]> {
