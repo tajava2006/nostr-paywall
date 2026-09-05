@@ -6,3 +6,6 @@ packages:
 # 이 레포에서만 명시적으로 허용한다.
 allowBuilds:
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@cashu/cashu-ts@4.10.1'

@@ -25,11 +25,12 @@ export function parsePaymentEnvelope(v: unknown): PaymentEnvelope | null {
   const method = v['method'];
   if (method === 'cashu') {
     const mint = v['mint'];
-    const proofs = v['proofs'];
+    const token = v['token'];
     if (typeof mint !== 'string' || mint.length === 0) return null;
-    if (!Array.isArray(proofs) || proofs.length === 0) return null;
+    // 인코딩된 토큰 문자열이어야 한다. 배열을 넣으면 릴레이 swap 이 입력 0개로 조립된다.
+    if (typeof token !== 'string' || token.length === 0) return null;
     const unit = typeof v['unit'] === 'string' ? v['unit'] : 'sat';
-    return { v: ENVELOPE_VERSION, method: 'cashu', mint, unit, proofs } satisfies CashuEnvelope;
+    return { v: ENVELOPE_VERSION, method: 'cashu', mint, unit, token } satisfies CashuEnvelope;
   }
 
   if (method === 'ln-keysend') {

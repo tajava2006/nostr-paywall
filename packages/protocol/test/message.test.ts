@@ -18,7 +18,8 @@ const cashu: CashuEnvelope = {
   method: 'cashu',
   mint: 'https://mint.example.com',
   unit: 'sat',
-  proofs: [{ id: '009a1f29', amount: 1, secret: 's', C: '02ab' }],
+  // 인코딩된 토큰 문자열. raw proof 배열이 아니다 (types.ts 주석 참조).
+  token: 'cashuBo2Ftd2h0dHBzOi8vbWludC5leGFtcGxlLmNvbWF1Y3NhdGF0gaJhaUgAmh8pMlPkHmFwgaNhYQFhc3hA',
 };
 
 const keysend: LnKeysendEnvelope = {
@@ -44,9 +45,12 @@ describe('parsePaymentEnvelope', () => {
     expect(parsePaymentEnvelope({ ...cashu, v: undefined })).toBeNull();
   });
 
-  it('proofs 가 비면 거부', () => {
-    expect(parsePaymentEnvelope({ ...cashu, proofs: [] })).toBeNull();
-    expect(parsePaymentEnvelope({ ...cashu, proofs: 'nope' })).toBeNull();
+  it('토큰이 비거나 문자열이 아니면 거부 — 배열을 넣으면 릴레이 swap 이 입력 0개가 된다', () => {
+    expect(parsePaymentEnvelope({ ...cashu, token: '' })).toBeNull();
+    expect(parsePaymentEnvelope({ ...cashu, token: undefined })).toBeNull();
+    expect(
+      parsePaymentEnvelope({ ...cashu, token: [{ id: '009a1f29', amount: 1 }] }),
+    ).toBeNull();
   });
 
   it('넌스가 32바이트 hex 가 아니면 거부 — 파생값이라 형식이 고정이다', () => {

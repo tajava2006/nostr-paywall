@@ -70,8 +70,17 @@ export interface CashuEnvelope {
   method: 'cashu';
   mint: string;
   unit: string;
-  /** NUT-00 Proof[]. **unlocked** — P2PK로 잠그지 않는다(PLAN D5). */
-  proofs: unknown[];
+  /**
+   * **인코딩된 NUT-00 토큰 문자열**(`cashuB…`). raw proof 배열이 아니다.
+   *
+   * 배열로 실으면 릴레이 쪽 swap 이 입력 0개로 조립돼 실패한다 — v2 keyset 의 짧은 id
+   * 해석이 토큰 디코딩 과정에서 일어나기 때문(실측: `Inputs: 0, Outputs: 0`).
+   * 문자열이라 JSON 왕복에도 무손실이고, proof 의 `amount` 가 cashu-ts v4 에서
+   * `Amount` 클래스(bigint 래퍼)라 직렬화하면 숫자가 문자열로 변하는 함정도 피한다.
+   *
+   * **unlocked** — P2PK로 잠그지 않는다(PLAN D5).
+   */
+  token: string;
 }
 
 export interface LnKeysendEnvelope {

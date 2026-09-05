@@ -35,6 +35,8 @@
 | D10 | 클라 라이브러리가 **ecash float을 직접 보유**. 앱은 **URI가 아니라 `payInvoice`/`makeInvoice` 콜백**을 준다 | §6 — NWC 코어에 keysend가 없어 float이 레일 무관성의 **유일한** 경로. URI를 받으면 앱 전체 예산을 상속하고 NWC 클라를 재구현하게 됨 |
 | D11 | LN 넌스는 저장하지 말고 **파생**: `HMAC(client_secret, event_id ‖ node_pubkey)` | §3.7 — 멱등과 예측불가가 동시에 성립 |
 | D12 | 멱등은 **유저 보호 방향**. Cashu는 `proof_secret` 키, LN은 파생 넌스 | §3.6 — 재시도 시 동일 봉투 재전송 규약 |
+| D13 | 민트 allowlist는 **`input_fee_ppk == 0`** 인 민트만 | **1 sat 가격의 생사가 걸림** — §4.1. ppk=100이면 수수료가 1 sat이라 1 sat proof는 swap 자체가 불가(실측) |
+| D14 | Cashu 봉투는 **인코딩된 토큰 문자열**(`cashuB…`). raw proof 배열 아님 | §3.2 — 배열로 실으면 릴레이 swap이 입력 0개로 조립됨(실측). 문자열이라 JSON 왕복 무손실 |
 
 ---
 
@@ -94,7 +96,12 @@ ALLOWLIST = {1, 4, 6, 7, 16, 1111, 1059}
   "method": "cashu",
   "mint": "https://mint.example.com",
   "unit": "sat",
-  "proofs": [ /* NUT-00 Proof[], 평범한 unlocked proof */ ]
+  // ★ 인코딩된 NUT-00 토큰 문자열. raw proof 배열이 아니다(D14).
+  //   배열로 실으면 릴레이 swap 이 입력 0개로 조립돼 실패한다 — v2 keyset 짧은 id
+  //   해석이 토큰 디코딩에서 일어나기 때문(실측 "Inputs: 0, Outputs: 0").
+  //   덤으로 cashu-ts v4 의 Proof.amount 가 Amount(bigint 래퍼)라 JSON 직렬화 시
+  //   숫자가 문자열로 변하는 함정도 피한다. 문자열은 왕복 무손실.
+  "token": "cashuB…"        // unlocked — P2PK 로 잠그지 않는다(D5)
 }
 
 // LN keysend
@@ -121,7 +128,7 @@ LN은 결제가 이벤트보다 먼저 도착하므로 명시적 바인딩이 �
 | `["OK", id, true, "duplicate: already have this event"]` | 이미 있음 — **무과금** |
 | `["OK", id, false, "payment-required: 1 sat per tagged note"]` | 결제 필요 (첫 접촉) |
 | `["OK", id, false, "payment-invalid: proof already spent"]` | 토큰 불량 |
-| `["OK", id, false, "payment-invalid: not locked to relay pubkey"]` | P2PK 검증 실패 |
+| `["OK", id, false, "payment-invalid: mint not allowed"]` | allowlist 밖 민트 (H1) |
 | `["OK", id, false, "error: storage failed; refund=cashuA…"]` | **결제 후 저장 실패 → proofs 반환** |
 
 `payment-required`는 NIP-01 표준 접두사 8종에 없다([01.md:180](../nips/01.md#L180)). 우리 클라가
@@ -134,15 +141,14 @@ LN은 결제가 이벤트보다 먼저 도착하므로 명시적 바인딩이 �
 1. 이벤트 파싱·서명 검증·크기·created_at 등 기본 검증
 2. 과금 술어 평가 → 무과금이면 바로 6
 3. 중복 확인 → 있으면 duplicate로 OK true, 종료 (무과금)
-4. payment 봉투 파싱 + **§4.1 검증 체크리스트 H1~H6 전건** (민트 allowlist·태그 화이트리스트)
+4. payment 봉투 파싱 + **H1 민트 allowlist** + **H1b ppk==0** (§4.1)
 5. ── 여기까지 통과해야 돈을 건드린다 ──
    swap (Cashu) / 정산 확인 (LN)
 6. 저장
 7. 저장 실패 시 fresh proofs를 OK 메시지로 반환
 ```
 
-배치 모드(§4.1 DLEQ)에선 5가 `DLEQ 오프라인 검증`으로 바뀌고 실제 swap이 6 뒤로 빠진다.
-v1은 동기(위 그대로), 배치는 노브로만 준비.
+v1은 동기 swap. 배치 정산은 P2PK 가 전제라 v2 (§4.1 v2 블록).
 
 - **1~4를 먼저 하는 이유**: 거부할 이벤트에 돈을 받으면 안 된다. 결제 후에 실패 가능한 건 인프라
   장애뿐이고 그건 7이 덮는다.
@@ -183,7 +189,7 @@ NIP-11이 **웹소켓과 같은 URL**이라 별도 엔드포인트 설정이 필
     "envelope_in_event_message": true,
     "methods": [
       { "type": "cashu", "unit": "sat",
-        "mints": ["https://mint.example.com"], "p2pk": "02abc…" },
+        "mints": ["https://mint.example.com"] },   // 전부 input_fee_ppk==0 이어야 함 (D13)
       { "type": "ln-keysend", "unit": "msat", "node": "03def…" }
     ]
   }
@@ -252,10 +258,42 @@ preimage     = sha256(event_id ‖ relay_node_pubkey ‖ client_nonce)
 → **swap은 동기**, 이벤트당 민트 왕복 1회. v1 PoC엔 수용 가능하고, 지연이 실제 문제가 되면
 그때 P2PK와 검증 체크리스트를 **같이** 다시 사면 된다.
 
-**남는 규칙 2개**:
+**남는 규칙 3개**:
 - **H1(민트 allowlist)은 유지** — 이유가 다르다. P2PK 방어가 아니라 "우리가 상환 가능한 민트여야
   한다"는 경제적 요건이다.
+- **H1b(신설, 2026-09-05): allowlist 민트는 `input_fee_ppk == 0` 이어야 한다.** 아래 참조.
 - 봉투가 이제 평문 베어러다 → **봉투를 로그에 찍지 마라.**
+
+#### ⚠️ H1b — swap 수수료가 1 sat 가격을 죽인다 (실측)
+
+내가 "Cashu는 수수료 0"이라고 한 건 **틀렸다.** 민트는 NUT-02 `input_fee_ppk` 로 swap 수수료를
+매길 수 있고, 공식은:
+
+```
+fees = ceil(sum(input_fee_ppk) / 1000)      # 02.md:43-50
+sum(inputs) - fees == sum(outputs)
+```
+
+`ppk=100` 이면 **입력 1~10개당 1 sat**. 즉 1 sat proof 는 `1 - 1 = 0` 출력이라 **swap 자체가
+성립하지 않는다.** testnut 실측:
+
+| 보낸 금액 | 릴레이 수납 | 결과 |
+|---|---|---|
+| 1 sat | — | ✗ `Inputs: 0, Outputs: 0` |
+| 2 sat | 1 sat | ✓ (수수료 1) |
+| 64 sat | 63 sat | ✓ (수수료 1) |
+
+공개 민트 실측 (`/v1/keysets` 의 활성 sat 키셋):
+
+| 민트 | `input_fee_ppk` | 1 sat 가능 |
+|---|---|---|
+| `mint.minibits.cash/Bitcoin` | **0** | ✅ |
+| `21mint.me` | **0** | ✅ |
+| `testnut.cashu.space` | 100 | ❌ |
+| `mint.coinos.io` | 100 | ❌ |
+
+→ 릴레이는 부팅 시 allowlist 민트의 활성 sat 키셋을 조회해 **ppk≠0 이면 거부**해야 한다.
+설정 실수 하나로 모든 수납이 조용히 0원이 되는 종류의 함정이다.
 
 **환불**: 잠기지 않았으므로 릴레이가 죽든 말든 클라가 스스로 회수한다. 릴레이가 swap 후 저장에
 실패한 경우에만 fresh proofs를 OK 메시지로 돌려준다(§3.4-7).
@@ -693,13 +731,14 @@ DM은 데모 범위 밖(그래서 NIP-42 AUTH도 범위 밖).
 | # | 항목 | 왜 |
 |---|---|---|
 | ~~V1~~ | ~~NUT-11 P2PK 원문 확인~~ | ✅ 전제는 참이나 **v1에서 P2PK 자체를 기각**(D5). 검증 6건도 같이 소멸. 근거·체크리스트는 §4.1 v2 블록에 보존 |
-| V7 | 민트 선정 — mainnet 민트 실측 + `/v1/info` 캡처 (P2PK 기각으로 NUT-11·12 요건 없어짐) | H1 allowlist를 채워야 M2가 돈다 |
+| ~~V7~~ | ~~민트 선정~~ | ✅ **완료**. 개발=`testnut.cashu.space`(가짜 인보이스 자동결제, 단 ppk=100이라 ≥2 sat만), mainnet 후보=`minibits`/`21mint`(둘 다 ppk=0). §4.1 H1b 표 |
+| V11 | **1 sat 실경로 검증** — ppk=0 민트(minibits)에서 mint→봉투→수납 왕복 | ppk=0 공개 *테스트* 민트가 없어(`nofees.testnut` 다운) 실사토시 소액 필요. 운영머신 LN에서 충전 |
 | V9 | float 단일 writer 락 — `navigator.locks`/`BroadcastChannel`로 멀티탭 이중지불 차단 | §6 C2. **실질 위험 1순위** |
 | V10 | NDK의 발행 확장 지점 — `SimplePool` 아닌 자체 풀이라 어댑터 필요 | §6.7. 생태계 사정거리를 결정. M3 때 클론해서 확인 |
 | ~~V8~~ | ~~`cashu-ts`의 P2PK/DLEQ 지원~~ | ✅ **전부 있음**. 아래 API 매핑 |
 | ~~V2~~ | ~~`@nostr-relay/validator`가 3원소 EVENT를 거부하는가~~ | ✅ **거부함**. 해결은 §3.1·§5.1 (포크 안에서 검증 전 추출) |
 | ~~V3~~ | ~~`BeforeHandleEventPlugin`에 봉투를 전달할 경로~~ | ✅ **해결**. §5.1 — `@nostr-relay/*` 포크 불필요 |
-| V4 | Cashu 민트 swap 실지연 | 이벤트당 지연 예산 |
+| ~~V4~~ | ~~Cashu 민트 swap 실지연~~ | ✅ **실측**: swap(receive) ~460ms, mint quote ~440ms, loadMint 300ms~1s(캐시 가능). 이벤트당 예산은 swap 1회 ≈ 0.5s |
 | ~~V5~~ | ~~keysend 정산 지연 → 릴레이 대기 창~~ | ✅ **소멸**. 클라가 정산 확인 후 EVENT 전송(§4.2) |
 | V6 | 대상 npub의 kind 10002를 유료 릴레이만으로 세팅했을 때 부작용 | 데모 npub은 실계정 말고 전용 키 쓸 것 |
 

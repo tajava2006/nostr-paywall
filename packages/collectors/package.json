@@ -1,0 +1,22 @@
+{
+  "name": "@nostr-paywall/collectors",
+  "version": "0.0.0",
+  "type": "module",
+  "description": "레일별 수납 어댑터 (cashu / ln-keysend). 실제로 돈을 만지는 유일한 층.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke-cashu.ts"
+  },
+  "dependencies": {
+    "@cashu/cashu-ts": "^4.10.1",
+    "@nostr-paywall/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

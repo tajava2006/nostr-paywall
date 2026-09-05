@@ -13,11 +13,28 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^2.1.8
-        version: 2.1.9
+        version: 2.1.9(@types/node@24.13.3)
+
+  packages/collectors:
+    dependencies:
+      '@cashu/cashu-ts':
+        specifier: ^4.10.1
+        version: 4.10.1
+      '@nostr-paywall/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
 
   packages/protocol: {}
 
 packages:
+
+  '@cashu/cashu-ts@4.10.1':
+    resolution: {integrity: sha512-dBCWk0dwaYzeGbwcRW0aGwHI8qD8bkXKaCivgJTC9nO4o/PAfYeQYL8LNgi2DU+YUdJh54keJxKNa5aB+hhjxA==}
+    engines: {node: '>=22.4.0'}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -167,6 +184,14 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
   '@rollup/rollup-android-arm-eabi@4.63.1':
     resolution: {integrity: sha512-UZ8sUxPTiHWYX9QNdJedb1kDZSpS1t/VPWBWGSgqHNi9w3Cu6IXvu2mzbhiTiPvtrqgTQJ+zqiAq2iPIPilpaQ==}
     cpu: [arm]
@@ -305,8 +330,17 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@scure/base@2.4.0':
+    resolution: {integrity: sha512-thZ1TuJwFwBblOhgsjDKvvGirBxNp+wSvY/DR6tJBJOTDhdAAcHJ8Vbr2eFnqaxeca4+t0i9KBf+uHYGWwZORg==}
+
+  '@scure/bip32@2.4.0':
+    resolution: {integrity: sha512-i3DS0CptAocyvqE4n3SUkpzeQK4vJMFwWLofTwRiiKo2aWojBOfyMCgfKw9HVpO6fSY5AK86sHS/Uzn8kK9Few==}
+
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
+
+  '@types/node@24.13.3':
+    resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -455,6 +489,9 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  undici-types@7.18.2:
+    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
   vite-node@2.1.9:
     resolution: {integrity: sha512-AM9aQ/IPrW/6ENLQg3AGY4K1N2TGZdR5e4gu/MmmR2xR3Ll1+dib+nook92g4TV3PXVyeyxdWwtaCAiUL0hMxA==}
     engines: {node: ^18.0.0 || >=20.0.0}
@@ -522,6 +559,13 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@cashu/cashu-ts@4.10.1':
+    dependencies:
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
+      '@scure/base': 2.4.0
+      '@scure/bip32': 2.4.0
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
@@ -596,6 +640,12 @@ snapshots:
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
+
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
+  '@noble/hashes@2.4.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.63.1':
     optional: true
@@ -672,7 +722,19 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.63.1':
     optional: true
 
+  '@scure/base@2.4.0': {}
+
+  '@scure/bip32@2.4.0':
+    dependencies:
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
+      '@scure/base': 2.4.0
+
   '@types/estree@1.0.9': {}
+
+  '@types/node@24.13.3':
+    dependencies:
+      undici-types: 7.18.2
 
   '@vitest/expect@2.1.9':
     dependencies:
@@ -681,13 +743,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 1.2.0
 
-  '@vitest/mocker@2.1.9(vite@5.4.21)':
+  '@vitest/mocker@2.1.9(vite@5.4.21(@types/node@24.13.3))':
     dependencies:
       '@vitest/spy': 2.1.9
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 5.4.21
+      vite: 5.4.21(@types/node@24.13.3)
 
   '@vitest/pretty-format@2.1.9':
     dependencies:
@@ -845,13 +907,15 @@ snapshots:
 
   typescript@5.9.3: {}
 
-  vite-node@2.1.9:
+  undici-types@7.18.2: {}
+
+  vite-node@2.1.9(@types/node@24.13.3):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 1.1.2
-      vite: 5.4.21
+      vite: 5.4.21(@types/node@24.13.3)
     transitivePeerDependencies:
       - '@types/node'
       - less
@@ -863,18 +927,19 @@ snapshots:
       - supports-color
       - terser
 
-  vite@5.4.21:
+  vite@5.4.21(@types/node@24.13.3):
     dependencies:
       esbuild: 0.21.5
       postcss: 8.5.28
       rollup: 4.63.1
     optionalDependencies:
+      '@types/node': 24.13.3
       fsevents: 2.3.3
 
-  vitest@2.1.9:
+  vitest@2.1.9(@types/node@24.13.3):
     dependencies:
       '@vitest/expect': 2.1.9
-      '@vitest/mocker': 2.1.9(vite@5.4.21)
+      '@vitest/mocker': 2.1.9(vite@5.4.21(@types/node@24.13.3))
       '@vitest/pretty-format': 2.1.9
       '@vitest/runner': 2.1.9
       '@vitest/snapshot': 2.1.9
@@ -890,9 +955,11 @@ snapshots:
       tinyexec: 0.3.2
       tinypool: 1.1.1
       tinyrainbow: 1.2.0
-      vite: 5.4.21
-      vite-node: 2.1.9
+      vite: 5.4.21(@types/node@24.13.3)
+      vite-node: 2.1.9(@types/node@24.13.3)
       why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 24.13.3
     transitivePeerDependencies:
       - less
       - lightningcss
