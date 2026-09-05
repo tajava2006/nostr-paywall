@@ -3,14 +3,18 @@
   "version": "0.0.0",
   "type": "module",
   "description": "레일별 수납 어댑터 (cashu / ln-keysend). 실제로 돈을 만지는 유일한 층.",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke-cashu.ts"
+    "smoke": "node scripts/smoke-cashu.ts",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@cashu/cashu-ts": "^4.10.1",
@@ -18,5 +22,10 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ]
 }

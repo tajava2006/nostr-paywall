@@ -3,11 +3,17 @@
   "version": "0.0.0",
   "type": "module",
   "description": "릴레이 측 — 결제 원장(Repository)과 가드 플러그인.",
-  "main": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@nostr-paywall/protocol": "workspace:*",
@@ -15,5 +21,10 @@
   },
   "devDependencies": {
     "@types/node": "^24"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ]
 }
