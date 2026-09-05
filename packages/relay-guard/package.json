@@ -1,6 +1,6 @@
 {
   "name": "@nostr-paywall/relay-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "이벤트 단위 유료 nostr 릴레이 — 결제 원장(node:sqlite)과 가드. 훅 비의존이라 어느 릴레이 구현에도 얹힌다.",
   "keywords": [
     "nostr",
@@ -11,12 +11,14 @@
     "sqlite"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
     }
   },
   "files": [
@@ -38,8 +40,8 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json",
-    "prepublishOnly": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/relay-guard",
+    "prepublishOnly": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/relay-guard"
   },
   "dependencies": {
     "@nostr-paywall/protocol": "workspace:*",
@@ -47,5 +49,6 @@
   },
   "devDependencies": {
     "@types/node": "^24"
-  }
+  },
+  "module": "./dist/esm/index.js"
 }

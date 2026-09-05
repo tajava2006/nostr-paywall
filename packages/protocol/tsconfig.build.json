@@ -1,11 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "./dist",
+    "outDir": "./dist/esm",
     "rootDir": "./src",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

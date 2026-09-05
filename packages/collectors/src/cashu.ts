@@ -3,10 +3,24 @@
 // 토큰은 **unlocked** 다(PLAN D5). 클라가 우리보다 먼저 회수해가면 swap 이 실패하고
 // 우리는 그냥 이벤트를 저장 안 하면 그만이라, 레이스를 져도 릴레이 손해가 0이다.
 
-import { Wallet, getEncodedToken, type Proof, type Token } from '@cashu/cashu-ts';
+import type { Proof, Token } from '@cashu/cashu-ts';
 import { isMintAllowed, type PaymentEnvelope } from '@nostr-paywall/protocol';
 import { assertZeroFeeMints } from './mint-policy.js';
 import type { CollectContext, CollectResult, Collector, ValidateResult } from './types.js';
+
+// ─── cashu-ts 지연 로딩 ─────────────────────────────────────────
+//
+// cashu-ts 는 ESM 전용(`type: module`)인데 이 패키지를 쓰는 릴레이 대부분은 CJS 다
+// (NestJS 기본). 정적 import 를 두면 CJS 빌드에서 `require()` 로 내려가 죽는다:
+//   SyntaxError: Unexpected token 'export'
+// 동적 import 는 CJS 에서도 ESM 을 읽을 수 있으므로 런타임 값만 지연 로딩한다.
+// 타입은 `import type` 이라 컴파일 때 사라진다.
+type CashuModule = typeof import('@cashu/cashu-ts');
+let cashuPromise: Promise<CashuModule> | undefined;
+function cashu(): Promise<CashuModule> {
+  cashuPromise ??= import('@cashu/cashu-ts');
+  return cashuPromise;
+}
 
 /** 테스트에서 네트워크를 끊기 위한 최소 계약. `Wallet` 이 구조적으로 만족한다. */
 export interface WalletLike {
@@ -37,7 +51,7 @@ export class CashuCollector implements Collector {
 
   private readonly allowedMints: readonly string[];
   private readonly unit: string;
-  private readonly makeWallet: (mint: string) => WalletLike;
+  private readonly walletFactory: ((mint: string) => WalletLike) | undefined;
   private readonly skipFeeCheck: boolean;
   private readonly wallets = new Map<string, Promise<WalletLike>>();
 
@@ -45,7 +59,7 @@ export class CashuCollector implements Collector {
     this.allowedMints = opts.allowedMints;
     this.unit = opts.unit ?? 'sat';
     this.skipFeeCheck = opts.skipFeeCheck ?? false;
-    this.makeWallet = opts.walletFactory ?? ((mint) => new Wallet(mint) as unknown as WalletLike);
+    this.walletFactory = opts.walletFactory;
   }
 
   /** 부팅 게이트. ppk≠0 민트가 하나라도 있으면 던져서 릴레이를 못 띄우게 한다. */
@@ -59,7 +73,9 @@ export class CashuCollector implements Collector {
     let w = this.wallets.get(mint);
     if (!w) {
       w = (async () => {
-        const wallet = this.makeWallet(mint);
+        const wallet =
+          this.walletFactory?.(mint) ??
+          ((new (await cashu()).Wallet(mint) as unknown) as WalletLike);
         await wallet.loadMint();
         return wallet;
       })();
@@ -145,6 +161,7 @@ export class CashuCollector implements Collector {
     // 환불 경로가 통째로 무력해지므로 삼킨다 — proofs 원물은 어차피 같이 넘긴다.
     let refundToken: string | null = null;
     try {
+      const { getEncodedToken } = await cashu();
       refundToken = getEncodedToken({ mint: envelope.mint, unit: this.unit, proofs: fresh });
     } catch {
       refundToken = null;

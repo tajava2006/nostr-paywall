@@ -1,6 +1,6 @@
 {
   "name": "@nostr-paywall/protocol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "이벤트 단위 유료 nostr 릴레이 — 과금 술어·NIP-11 파서·EVENT 봉투·OK 규약. 릴레이와 클라가 공유하는 순수 로직.",
   "keywords": [
     "nostr",
@@ -11,12 +11,14 @@
     "cashu"
   ],
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/esm/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
+      "types": "./dist/esm/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/esm/index.js"
     }
   },
   "files": [
@@ -38,7 +40,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json",
-    "prepublishOnly": "tsc -p tsconfig.build.json"
-  }
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/protocol",
+    "prepublishOnly": "tsc -p tsconfig.build.json && tsc -p tsconfig.cjs.json && node ../../scripts/fix-cjs.mjs packages/protocol"
+  },
+  "module": "./dist/esm/index.js"
 }
