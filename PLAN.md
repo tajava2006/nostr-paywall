@@ -666,6 +666,23 @@ nostr-tools를 **직접** 쓰는 클라에겐 진짜 드랍인이다. 다만 생
 
 ## 7. 패키지
 
+### 발행 상태 (2026-09-05) — npm `@nostr-paywall` 0.1.0
+
+| 패키지 | 용도 |
+|---|---|
+| `@nostr-paywall/protocol` | 술어·NIP-11 파서·봉투·OK 규약 (의존성 0) |
+| `@nostr-paywall/collectors` | Cashu 수납 + 민트 수수료 부팅 게이트 |
+| `@nostr-paywall/relay-guard` | 결제 원장(node:sqlite) + guard |
+
+클린룸 `npm i` → import → `guard.check()` 동작까지 확인. 릴레이 포크는 이걸 그냥 설치해 쓴다.
+
+⚠️ **발행 함정 2건** (다음 버전 올릴 때 또 헤매지 말 것):
+1. npm 이 이제 발행에 **2FA 필수**다. 안 켜져 있으면 `E403`.
+2. 2FA 를 **passkey** 로 등록하면 인증기 앱에 항목이 안 생기고 `--otp=` 도 못 쓴다.
+   pnpm 이 대화형 프롬프트로 처리하므로 **발행은 대화형 터미널에서** 해야 한다
+   (비대화형이면 `ERR_PNPM_OTP_NON_INTERACTIVE`). CI 로 돌리려면 granular access token.
+
+
 ```
 nostr-paywall/                      (레포 1개, pnpm workspace)
 ├─ packages/protocol/      술어 · 봉투/terms 타입 · OK 파서 · NIP-11 파서.  순수, I/O 0
