@@ -722,7 +722,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
 | ✅ M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **운영 릴레이 라이브 검증 완료** (2026-09-05, nostr.hoppe-relay.it.com) |
-| 🔨 M3 | `client` PaidPool + `float` | **코드 완료**(유닛 140, 학습 경로 라이브 확인). 남은 것: 실사토시로 e2e 1건(V11) |
+| ✅ M3 | `client` PaidPool + `float` | **실사토시 전 주기 완결** (2026-09-05). 유닛 145 |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
 
@@ -833,6 +833,36 @@ vitest 5 에서 해결됨 — 그보다 낮은 버전은 이 패키지를 못 �
 - **pm2/systemd 는 셸이 아니라 데몬의 Node 를 물려준다.** nvm 으로 셸만 24 로 올려도
   데몬이 20 이면 `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` 로 죽는다. `pm2 kill` 필요.
 
+### M3 실사토시 e2e (2026-09-05) — 전 주기 완결
+
+`packages/float/scripts/e2e-drill.mjs` 로 반복 가능하게 남김
+(`quote`/`claim`/`status`/`publish`/`reconcile`/`refund`).
+
+| 단계 | sat |
+|---|---|
+| minibits 충전 | +20 |
+| 유료 이벤트 3건 발행 (운영 릴레이) | −3 |
+| 라이트닝 주소로 환불 | −15 |
+| LN 라우팅 수수료 | −2 |
+| 잔액 | **0** |
+
+발행한 3건은 릴레이에서 되읽어 저장 확인. 전 경로가 한 번에 이어졌다:
+LN 결제 → ecash 구매 → float 적재 → `payment-required` 학습 → NIP-11 조건 파싱 →
+1 sat 봉투 → 3원소 EVENT → 릴레이 봉투 추출 → 민트 allowlist 검증 → swap → 원장 → 저장.
+
+#### 환불 — melt 에는 "남은 만큼 보내기"가 없다
+
+NUT-05 melt 는 금액이 박힌 bolt11 을 요구하는데, 얼마짜리를 만들지는 melt 견적을
+받아봐야 안다(수수료 예약분 때문). 유저에게 물어도 유저가 모른다.
+→ **라이트닝 주소(LUD-16)면 우리가 금액을 정해 인보이스를 뽑을 수 있어** 반복으로
+수렴시킬 수 있다(초과분만큼 깎아 재시도, 보통 2~3회). NUT-08 change 도 float 으로 회수.
+
+#### 라이브에서 잡은 것
+
+라이트닝 주소 서버가 502 일 때 `res.json()` 이 `Unexpected token '<'` 로만 터져
+원인을 못 찾았다 → HTTP 상태·본문을 담아 던지도록 수정. (ecash 는 조회 단계에서
+멈춰 무사)
+
 ### 데모(M4) 설계
 
 하드코딩 npub의 최근 글 5개를 그 npub의 **write 릴레이**에서 가져오고, 각 글의 덧글은 그 저자의
@@ -854,7 +884,7 @@ DM은 데모 범위 밖(그래서 NIP-42 AUTH도 범위 밖).
 |---|---|---|
 | ~~V1~~ | ~~NUT-11 P2PK 원문 확인~~ | ✅ 전제는 참이나 **v1에서 P2PK 자체를 기각**(D5). 검증 6건도 같이 소멸. 근거·체크리스트는 §4.1 v2 블록에 보존 |
 | ~~V7~~ | ~~민트 선정~~ | ✅ **완료**. 개발=`testnut.cashu.space`(가짜 인보이스 자동결제, 단 ppk=100이라 ≥2 sat만), mainnet 후보=`minibits`/`21mint`(둘 다 ppk=0). §4.1 H1b 표 |
-| V11 | **1 sat 실경로 검증** — ppk=0 민트(minibits)에서 mint→봉투→수납 왕복 | ppk=0 공개 *테스트* 민트가 없어(`nofees.testnut` 다운) 실사토시 소액 필요. 운영머신 LN에서 충전 |
+| ~~V11~~ | ~~1 sat 실경로 검증~~ | ✅ **완결**. minibits 20 sat → 유료 이벤트 3건 → 라이트닝 주소로 환불. 회계 `20 = 3 + 15 + 2` |
 | V9 | float 단일 writer 락 — `navigator.locks`/`BroadcastChannel`로 멀티탭 이중지불 차단 | §6 C2. **실질 위험 1순위** |
 | V10 | NDK의 발행 확장 지점 — `SimplePool` 아닌 자체 풀이라 어댑터 필요 | §6.7. 생태계 사정거리를 결정. M3 때 클론해서 확인 |
 | ~~V8~~ | ~~`cashu-ts`의 P2PK/DLEQ 지원~~ | ✅ **전부 있음**. 아래 API 매핑 |
