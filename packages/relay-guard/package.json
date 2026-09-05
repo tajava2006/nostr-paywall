@@ -1,19 +1,45 @@
 {
   "name": "@nostr-paywall/relay-guard",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "이벤트 단위 유료 nostr 릴레이 — 결제 원장(node:sqlite)과 가드. 훅 비의존이라 어느 릴레이 구현에도 얹힌다.",
+  "keywords": [
+    "nostr",
+    "relay",
+    "paywall",
+    "micropayment",
+    "cashu",
+    "sqlite"
+  ],
   "type": "module",
-  "description": "릴레이 측 — 결제 원장(Repository)과 가드 플러그인.",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tajava2006/nostr-paywall.git",
+    "directory": "packages/relay-guard"
+  },
+  "homepage": "https://github.com/tajava2006/nostr-paywall#readme",
+  "bugs": {
+    "url": "https://github.com/tajava2006/nostr-paywall/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@nostr-paywall/protocol": "workspace:*",
@@ -21,10 +47,5 @@
   },
   "devDependencies": {
     "@types/node": "^24"
-  },
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "src"
-  ]
+  }
 }
