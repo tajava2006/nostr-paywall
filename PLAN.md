@@ -720,7 +720,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 |---|---|---|
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
-| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **순수 로직 완료**(유닛 111 + 라이브 스모크). 남은 것: 릴레이 포크 배선뿐 |
+| ✅ M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **운영 릴레이 라이브 검증 완료** (2026-09-05, nostr.hoppe-relay.it.com) |
 | M3 | `client` PaidPool + `float`(NWC 충전 → 1sat 지출 → 환불) | CLI로 유료 발행 1건 + 잔액 환불 1건 |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
@@ -797,6 +797,40 @@ vitest 5 에서 해결됨 — 그보다 낮은 버전은 이 패키지를 못 �
 
 `rate-limited` 접두사 추가: 같은 이벤트 결제가 처리 중일 때 `payment-invalid` 를 쓰면
 "이 봉투로 재시도하지 마라"는 **잘못된 신호**가 된다. 봉투엔 문제가 없고 잠시 후 재시도가 맞다.
+
+### M2 라이브 검증 (2026-09-05) — 운영 릴레이에서 실측
+
+`nostr.hoppe-relay.it.com` 에 `PAYWALL_ENABLED=true` + minibits 민트로 켜고 일회용 키로 확인.
+
+| 케이스 | 결과 |
+|---|---|
+| 태그 없는 플레인 노트 | ✅ 수락 (무료 경로 무손상) |
+| kind 3 팔로우 리스트 (p 태그 다수) | ✅ 수락 — **카브아웃 실제로 작동** |
+| kind 1 + `p` / kind 1 + `e` / kind 7 | ✗ `payment-required: 1 sat per event that tags someone` |
+| **3원소 EVENT + allowlist 밖 민트** | ✗ `payment-invalid: mint not allowed: …` |
+| 같은 이벤트 재발행 | ✅ `duplicate: already have this event` (무과금) |
+
+**3원소 봉투가 validator 를 통과해 collector 까지 도달한다**는 게 여기서 확정됐다 —
+검증 전 추출(§5.1)이 실제로 동작한다. NIP-11 도 `fees.publication` + `payment_v1` 을
+설계 그대로 노출한다.
+
+#### 라이브에서만 잡힌 것 2건
+
+1. **유료 이벤트에 OK 를 아예 안 보냈다** (응답 없이 소켓이 멈춤). 코어가
+   `ctx.sendMessage(OK)` 를 `_handleMessage` **안에서** 호출하므로, `HandleMessagePlugin`
+   이 `next()` 없이 반환하면 클라에 아무것도 안 나간다. 단축 반환 경로에서 OK 를
+   직접 보내도록 수정. **유닛 테스트로는 잡을 수 없던 종류다.**
+2. **수납 후 저장 실패 시 환불 토큰을 인밴드로 못 준다.** 코어가 이미 OK 를 보낸
+   뒤이고, 같은 event id 로 OK 를 두 번 보내면 클라가 두 번째를 버린다.
+   → 원장을 `failed` 로 되돌리고 proofs 를 남긴 채 `error` 로 크게 찍어 수동 회수.
+   §3.3 의 `okRefund` 는 **이 릴레이 코어에선 쓰이지 않는다**(다른 구현에선 가능).
+
+#### 운영 함정 (배포하며 실제로 겪음)
+
+- `PAYWALL_MINTS` 를 2개 이상 넣으면 부팅 실패했다 — 이 릴레이의 env 전처리가 콤마를
+  배열로 쪼개는데 스키마가 `z.string()` 이었다. `arraySchema` 로 수정.
+- **pm2/systemd 는 셸이 아니라 데몬의 Node 를 물려준다.** nvm 으로 셸만 24 로 올려도
+  데몬이 20 이면 `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` 로 죽는다. `pm2 kill` 필요.
 
 ### 데모(M4) 설계
 
