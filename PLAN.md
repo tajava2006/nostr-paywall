@@ -706,6 +706,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 ├─ packages/collectors/    cashu / ln-keysend 어댑터
 ├─ packages/client/        PaidPool · 정책 캐시 · Payer 타입
 ├─ packages/float/         ecash float — 민트 클라 · 영구저장 · 단일 writer 락 · NWC 충전/환불
+│                          (store: IndexedDB/파일 자동선택, lock: Web Locks, pending GC)
 └─ apps/demo/             데모 웹클라
 ```
 
@@ -721,7 +722,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
 | ✅ M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **운영 릴레이 라이브 검증 완료** (2026-09-05, nostr.hoppe-relay.it.com) |
-| M3 | `client` PaidPool + `float`(NWC 충전 → 1sat 지출 → 환불) | CLI로 유료 발행 1건 + 잔액 환불 1건 |
+| 🔨 M3 | `client` PaidPool + `float` | **코드 완료**(유닛 140, 학습 경로 라이브 확인). 남은 것: 실사토시로 e2e 1건(V11) |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
 
