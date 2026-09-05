@@ -687,7 +687,7 @@ nostr-paywall/                      (레포 1개, pnpm workspace)
 |---|---|---|
 | ✅ M0 | 이 문서 | 스키마 2개(§3.2·§3.5) 확정 |
 | ✅ M1 | `protocol` | **59/59 green** (2026-09-05). 술어·NIP-11 파서·봉투·EVENT 메시지·OK 왕복 |
-| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **collector 완료**(유닛 25 + 라이브 스모크). 남은 것: guard 배선 + repo |
+| 🔨 M2 | 릴레이 포크 + guard + sqlite repo + cashu collector | **collector·원장 완료**(유닛 40 + 라이브 스모크). 남은 것: guard 조립 + 릴레이 배선 |
 | M3 | `client` PaidPool + `float`(NWC 충전 → 1sat 지출 → 환불) | CLI로 유료 발행 1건 + 잔액 환불 1건 |
 | M4 | 데모 웹 | 하드코딩 npub 5글 + 재귀 아웃박스 덧글 트리 |
 | M5 | ln-keysend collector | 직접 채널 시연 1건 |
@@ -728,6 +728,24 @@ NIP-22 웹URL 코멘트 무료 vs 이벤트 코멘트 과금, 대문자 `E`/`P` 
    *이미 돈을 받은 뒤*라 §3.4-7 환불 경로가 통째로 죽는다 → 삼키고 `refundToken: null`.
    대신 `CollectResult.proofs` 로 원물을 항상 넘긴다.
    **릴레이는 이 proofs 를 반드시 영구 저장해야 한다** — 베어러라 재시작 한 번에 전부 잃는다.
+
+### M2 진행 (2026-09-05) — 결제 원장 완료
+
+`packages/relay-guard` — 유닛 15 green. **`node:sqlite` 라 네이티브 의존성 0**(Node 22.5+ 내장).
+
+원장이 지키는 것 셋:
+1. **이중사용** — `payment_ref.ref` PRIMARY KEY 가 곧 "이 proof secret 은 한 이벤트만 산다"
+2. **멱등(유저 보호)** — `already-paid` / `in-progress` / `conflict` 상태 머신.
+   **클라가 봉투를 잃고 새 proofs 로 재시도해도 `event_id` 로 잡혀 재과금되지 않는다**
+3. **자산 보관** — 수납 proofs 는 베어러다. 이 원장이 **유일한 사본**이라 감사 로그가 아니라
+   자산 원장이다. 릴레이 이벤트 저장소(Postgres)와 독립시킨 이유도 이것 — 한쪽이 날아가도 다른 쪽은 산다
+
+설계 메모: DB 검사는 **빠른 길일 뿐 최종 심판이 아니다.** 동시 요청 둘이 다 통과해도 민트의
+swap 이 한쪽을 죽인다. 원장은 낭비를 줄이고 멱등을 정확히 하기 위한 것.
+
+⚠️ 도구 함정: **`node:sqlite` 는 prefix-only 빌트인**이다(`builtinModules` 에 `'sqlite'` 없이
+`'node:sqlite'` 로만 있음). Vite 가 `node:` 를 떼고 조회해 `Failed to load url sqlite` 로 죽는다.
+vitest 5 에서 해결됨 — 그보다 낮은 버전은 이 패키지를 못 돌린다.
 
 ### 데모(M4) 설계
 
