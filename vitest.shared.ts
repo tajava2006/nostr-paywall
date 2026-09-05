@@ -9,4 +9,5 @@ export const workspaceAlias = {
   '@nostr-paywall/protocol': src('protocol'),
   '@nostr-paywall/collectors': src('collectors'),
   '@nostr-paywall/relay-guard': src('relay-guard'),
+  '@nostr-paywall/client': src('client'),
 };
