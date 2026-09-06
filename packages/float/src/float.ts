@@ -15,6 +15,7 @@ import {
   type FloatStore,
   type MintBucket,
   type PendingSpend,
+  type RefundRecord,
   type SpendRecord,
 } from './store.js';
 
@@ -243,6 +244,12 @@ export class EcashFloat {
     return state.spends ?? [];
   }
 
+  /** 환불 이력. */
+  async refundHistory(): Promise<RefundRecord[]> {
+    const state = await this.loadState();
+    return state.refunds ?? [];
+  }
+
   /** 충전 이력. */
   async topUpHistory(): Promise<{ at: number; sats: number }[]> {
     const state = await this.loadState();
@@ -345,10 +352,56 @@ export class EcashFloat {
         bb.proofs = normalizeProofs([...(keep as Proof[]), ...change]) as Proof[];
       });
 
-      out.push({
+      const record: RefundRecord = {
+        at: Date.now(),
         mint,
         sentSats: found.sendSats,
         feeSats: found.neededSats - found.sendSats - sats(change),
+        target: address,
+      };
+      await this.mutate(async (s) => {
+        s.refunds ??= [];
+        s.refunds.push(record);
+      });
+      out.push({ mint: record.mint, sentSats: record.sentSats, feeSats: record.feeSats });
+    }
+    return out;
+  }
+
+  /**
+   * **얼마를 보낼 수 있는지만** 계산한다. 녹이지 않는다.
+   *
+   * "깔끔하게 비우려면 얼마짜리 인보이스를 넣어야 하나"에 대한 답이다 —
+   * melt 수수료 예약분 때문에 총액을 그대로 넣으면 실패하고, 유저는 얼마를 빼야
+   * 할지 모른다. 라이트닝 주소가 있으면 우리가 인보이스를 뽑아 견적만 받아볼 수 있다.
+   */
+  async estimateRefund(
+    address: string,
+  ): Promise<{ mint: string; totalSats: number; sendSats: number; feeSats: number }[]> {
+    const params = await resolveLightningAddress(address);
+    const state = await this.loadState();
+    const out: { mint: string; totalSats: number; sendSats: number; feeSats: number }[] = [];
+
+    for (const [mint, b] of Object.entries(state.mints)) {
+      const total = sats(b.proofs);
+      if (total < 2) continue;
+      const { Wallet } = await cashu();
+      const wallet = new Wallet(mint);
+      await wallet.loadMint();
+      const found = await findAffordableAmount(total, async (send) => {
+        const invoice = await requestInvoice(params, send);
+        const quote = await wallet.createMeltQuoteBolt11(invoice);
+        return {
+          neededSats: Number(quote.amount) + Number(quote.fee_reserve ?? 0),
+          quote,
+        };
+      });
+      if (!found) continue;
+      out.push({
+        mint,
+        totalSats: total,
+        sendSats: found.sendSats,
+        feeSats: found.neededSats - found.sendSats,
       });
     }
     return out;

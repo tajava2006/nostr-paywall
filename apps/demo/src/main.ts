@@ -1,10 +1,12 @@
-// 데모 웹클라 — 평범한 nostr 클라처럼 생겼고, 딱 한 줄만 다르다:
+// A demo nostr client. It looks ordinary, and exactly one line differs from one:
 //   new SimplePool()  →  new PaidPool({ payer })
-// 나머지(구독·조회)는 손대지 않았다. 읽기는 무료니까.
+// Subscriptions and queries are untouched. Reading is free.
 
 import './style.css';
 import type { Event } from 'nostr-tools/core';
 import { PaymentUnavailableError } from '@nostr-paywall/client';
+import { ABOUT_HTML } from './about.js';
+import { checkMint, checkRelay, type Health } from './health.js';
 import {
   DEMO_RELAY,
   announceRelayListOnce,
@@ -13,6 +15,7 @@ import {
   setNwc,
   sign,
 } from './identity.js';
+import { NwcClient } from './nwc.js';
 import {
   BOOTSTRAP_RELAYS,
   fetchReactionsFor,
@@ -23,44 +26,51 @@ import {
 import { buildReaction, buildReply, buildThread, type ThreadNode } from './thread.js';
 import { createWallet, requestPersistence, setTopUpAsker } from './wallet.js';
 
-/** 데모 대상 계정. 이 사람의 inbox 는 유료 릴레이 하나뿐이다. */
+/** The account this demo reads. Its only inbox relay is the paid one. */
 const AUTHOR = '953878bc1ed3647168b5d0ddd29190bed95756c2296b8f48ded8a41b7c270841';
 const MINT = 'https://mint.minibits.cash/Bitcoin';
+/** Where to open an event in a general-purpose client, for contrast. */
+const VIEWER = 'https://jumble.social/notes/';
 
 const wallet = createWallet([MINT]);
 const pool = wallet.pool;
 const app = document.getElementById('app')!;
 
-let tab: 'feed' | 'wallet' = 'feed';
+type Tab = 'feed' | 'wallet' | 'about';
+let tab: Tab = 'feed';
 let notes: Event[] = [];
-let threads = new Map<string, ThreadNode>();
-let profiles = new Map<string, { name?: string }>();
+const threads = new Map<string, ThreadNode>();
+const profiles = new Map<string, { name?: string; display_name?: string }>();
 let status = '';
+let relayHealth: Health = { state: 'checking' };
+let mintHealth: Health = { state: 'checking' };
 
 const short = (pk: string) => pk.slice(0, 8);
-const nameOf = (pk: string) => profiles.get(pk)?.name ?? short(pk);
-const when = (t: number) => new Date(t * 1000).toLocaleString('ko-KR');
+const nameOf = (pk: string) => {
+  const p = profiles.get(pk);
+  return p?.display_name || p?.name || short(pk);
+};
+const when = (ms: number) => new Date(ms).toLocaleString();
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-// ─── 데이터 ──────────────────────────────────────────────────────
+// ─── data ────────────────────────────────────────────────────────
 
 async function loadFeed() {
-  status = '아웃박스 조회 중…';
+  status = 'Resolving relays (NIP-65)…';
   render();
 
-  // 이 사람이 **쓴** 글이므로 write 릴레이에서 (NIP-65).
+  // Their own notes → their write relays.
   const { write } = await relayListFor(pool, AUTHOR);
   const relays = write.length ? write : BOOTSTRAP_RELAYS;
   notes = (await pool.querySync(relays, { authors: [AUTHOR], kinds: [1], limit: 5 }))
     .sort((a, b) => b.created_at - a.created_at)
     .slice(0, 5);
 
-  const meta = await pool.querySync(relays, { authors: [AUTHOR], kinds: [0] });
-  for (const m of meta) {
+  for (const m of await pool.querySync(relays, { authors: [AUTHOR], kinds: [0] })) {
     try {
       profiles.set(m.pubkey, JSON.parse(m.content));
-    } catch { /* 프로필이 깨져도 피드는 보여준다 */ }
+    } catch { /* a broken profile shouldn't hide the feed */ }
   }
 
   status = '';
@@ -69,122 +79,110 @@ async function loadFeed() {
 }
 
 async function loadThread(note: Event) {
-  // 이 노트에 **온** 답글이므로 작성자의 inbox 에서 (NIP-65). 재귀 없음 —
-  // NIP-10 의 p 태그 누적 규정 덕에 한 번으로 전 depth 가 온다.
+  // Replies sent *to* this note → the author's inbox relays. No recursion:
+  // NIP-10 makes replies inherit ancestor p tags, so one query covers every depth.
   const events = await fetchThread(pool, note);
-  const tree = buildThread(note, events);
-
-  // 리액션만 예외다. NIP-25 는 조상 태그를 안 물려받으므로 답글에 달린 리액션은
-  // 그 답글 작성자의 inbox 에 있다 → 레벨당 1회 배치로 따로 모은다.
   const replies = events.filter((e) => e.kind === 1 || e.kind === 1111);
-  if (replies.length) {
-    const extra = await fetchReactionsFor(pool, replies);
-    if (extra.length) {
-      const merged = buildThread(note, [...events, ...extra]);
-      threads.set(note.id, merged);
-      render();
-      return;
-    }
+
+  // Reactions are the exception — NIP-25 inherits nothing, so a reaction on a reply
+  // lives in *that* author's inbox. One batched pass per level, not recursion.
+  const extra = replies.length ? await fetchReactionsFor(pool, replies) : [];
+  threads.set(note.id, buildThread(note, [...events, ...extra]));
+
+  for (const ev of [...replies, ...extra]) {
+    if (profiles.has(ev.pubkey)) continue;
+    profiles.set(ev.pubkey, {});
   }
-  threads.set(note.id, tree);
   render();
 }
 
-// ─── 발행 ────────────────────────────────────────────────────────
+// ─── publishing ──────────────────────────────────────────────────
 
 async function publish(event: Event): Promise<void> {
-  // 표준대로 목적지를 계산한다: 내 write + p 태그된 사람들의 read.
+  // Standard targets: my write relays + the read relays of everyone p-tagged.
+  // A reply to someone whose inbox is a free relay really does get published there.
   const targets = await publishTargetsFor(pool, event);
   const relays = targets.length ? targets : [DEMO_RELAY];
   const results = await Promise.allSettled(pool.publish(relays, event));
 
-  const failed = results.filter((r) => r.status === 'rejected');
-  const paymentIssue = failed.find(
-    (r) => (r as PromiseRejectedResult).reason instanceof PaymentUnavailableError,
-  ) as PromiseRejectedResult | undefined;
-
-  if (paymentIssue) {
-    // 일반 오류와 **구별해서** 알린다. 뭉개면 "상대에게 전달 안 됐는데 성공"이 된다.
-    const e = paymentIssue.reason as PaymentUnavailableError;
+  const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+  const payment = rejected.find((r) => r.reason instanceof PaymentUnavailableError);
+  if (payment) {
+    // Keep this distinct from a generic failure. Blur them and you get
+    // "the UI said sent, the recipient never got it".
+    const e = payment.reason as PaymentUnavailableError;
     throw new Error(
       e.reason === 'no-payer'
-        ? `${e.relayUrl} 은 유료 릴레이입니다. 지갑 탭에서 NWC 를 연결하세요.`
-        : `결제하지 못해 ${e.relayUrl} 에 전달되지 않았습니다: ${e.message}`,
+        ? `${e.relayUrl} charges for this event. Connect a wallet in the Wallet tab.`
+        : `Not delivered to ${e.relayUrl}: ${e.message}`,
     );
   }
-  if (failed.length === results.length) {
-    throw new Error(`발행 실패: ${(failed[0] as PromiseRejectedResult)?.reason}`);
+  if (rejected.length === results.length) {
+    throw new Error(`Publish failed: ${rejected[0]?.reason}`);
   }
 }
 
-async function submitReply(root: Event, parent: Event, content: string) {
-  status = '발행 중…';
+async function withStatus(busy: string, fn: () => Promise<void>) {
+  status = busy;
   render();
   try {
-    // 릴레이 목록 광고는 **첫 덧글 때만**. 방문만 한 사람이 이벤트를 남기면 스팸이다.
+    await fn();
+    status = '';
+  } catch (e) {
+    status = `⚠ ${(e as Error).message}`;
+  }
+  render();
+}
+
+function submitReply(root: Event, parent: Event, content: string) {
+  return withStatus('Publishing…', async () => {
+    // Announce our relay list on first write only — a visitor who just reads
+    // shouldn't leave events behind.
     await announceRelayListOnce(async (ev, relays) => {
       await Promise.allSettled(pool.publish(relays, ev));
     });
     const event = sign(buildReply({ content, root, parent, relayHint: DEMO_RELAY }));
     await publish(event);
     await wallet.float.settle(event.id);
-    status = '';
     await loadThread(root);
-  } catch (e) {
-    status = `⚠ ${(e as Error).message}`;
-    render();
-  }
+  });
 }
 
-async function react(root: Event, target: Event) {
-  status = '리액션 발행 중…';
-  render();
-  try {
+function react(root: Event, target: Event) {
+  return withStatus('Publishing reaction…', async () => {
     await announceRelayListOnce(async (ev, relays) => {
       await Promise.allSettled(pool.publish(relays, ev));
     });
     const event = sign(buildReaction(target));
     await publish(event);
     await wallet.float.settle(event.id);
-    status = '';
     await loadThread(root);
-  } catch (e) {
-    status = `⚠ ${(e as Error).message}`;
-    render();
-  }
+  });
 }
 
-// ─── 렌더 ────────────────────────────────────────────────────────
+// ─── render: feed ────────────────────────────────────────────────
 
 function renderNode(root: Event, node: ThreadNode): string {
-  const isRoot = node.depth === 0;
-  const paid = node.depth === 1;
   const reactions = node.reactions.length
-    ? `<span class="dim small">${node.reactions.length}개 반응</span>`
+    ? `<span class="dim small">${node.reactions.length} reaction${node.reactions.length > 1 ? 's' : ''}</span>`
     : '';
-
   const children = node.children
     .sort((a, b) => a.event.created_at - b.event.created_at)
     .map((c) => renderNode(root, c))
     .join('');
 
-  const badge = isRoot
-    ? ''
-    : paid
-      ? '<span class="badge paid">1 sat 지불됨</span>'
-      : '<span class="badge free">무료 릴레이 경유 가능</span>';
-
   return `
-    <div class="reply ${paid ? 'depth1' : ''}">
+    <div class="reply">
       <div class="meta">
         <b>${esc(nameOf(node.event.pubkey))}</b>
         <span class="mono">${short(node.event.pubkey)}</span>
-        <span>${when(node.event.created_at)}</span>
-        ${badge} ${reactions}
+        <span>${when(node.event.created_at * 1000)}</span>
+        <a class="dim small" href="${VIEWER}${node.event.id}" target="_blank" rel="noreferrer">open ↗</a>
+        ${reactions}
       </div>
       <div class="note-body">${esc(node.event.content)}</div>
       <div class="row" style="margin-top:8px">
-        <button class="action" data-reply="${node.event.id}" data-root="${root.id}">답글</button>
+        <button class="action" data-reply="${node.event.id}" data-root="${root.id}">Reply</button>
         <button class="action" data-react="${node.event.id}" data-root="${root.id}">+</button>
       </div>
       <div data-form="${node.event.id}"></div>
@@ -192,25 +190,28 @@ function renderNode(root: Event, node: ThreadNode): string {
     </div>`;
 }
 
+const countReplies = (n: ThreadNode): number =>
+  n.children.reduce((acc, c) => acc + 1 + countReplies(c), 0);
+
 function renderFeed(): string {
-  if (!notes.length) return `<div class="notice info">불러오는 중…</div>`;
+  if (!notes.length) return `<div class="notice info">Loading…</div>`;
   return notes
     .map((note) => {
       const tree = threads.get(note.id);
-      const count = tree ? countReplies(tree) : 0;
       return `
       <article class="card">
         <div class="meta">
           <b>${esc(nameOf(note.pubkey))}</b>
           <span class="mono">${short(note.pubkey)}</span>
-          <span>${when(note.created_at)}</span>
+          <span>${when(note.created_at * 1000)}</span>
+          <a class="dim small" href="${VIEWER}${note.id}" target="_blank" rel="noreferrer">open ↗</a>
         </div>
         <div class="note-body" style="margin:8px 0">${esc(note.content)}</div>
         <div class="row">
-          <button class="action" data-reply="${note.id}" data-root="${note.id}">답글</button>
+          <button class="action" data-reply="${note.id}" data-root="${note.id}">Reply · 1 sat</button>
           <button class="action" data-react="${note.id}" data-root="${note.id}">+</button>
           <span class="spacer"></span>
-          <span class="dim small">${tree ? `답글 ${count}개` : '스레드 조회 중…'}</span>
+          <span class="dim small">${tree ? `${countReplies(tree)} replies` : 'loading thread…'}</span>
         </div>
         <div data-form="${note.id}"></div>
         <div class="thread">${tree ? tree.children.map((c) => renderNode(note, c)).join('') : ''}</div>
@@ -219,110 +220,171 @@ function renderFeed(): string {
     .join('');
 }
 
-function countReplies(node: ThreadNode): number {
-  return node.children.reduce((n, c) => n + 1 + countReplies(c), 0);
-}
+// ─── render: wallet ──────────────────────────────────────────────
 
 let balances: Record<string, number> = {};
-let spends: { at: number; sats: number; relayUrl: string }[] = [];
+let spends: { at: number; mint: string; sats: number; eventId: string; relayUrl: string }[] = [];
+let topUps: { at: number; sats: number }[] = [];
+let refunds: { at: number; mint: string; sentSats: number; feeSats: number; target: string }[] = [];
+let nwcBalanceSats: number | null = null;
+let sweepHint = '';
 
 function renderWallet(): string {
-  const nwcSet = Boolean(getNwc());
+  const connected = Boolean(getNwc());
   const total = Object.values(balances).reduce((a, b) => a + b, 0);
+
+  const history = [
+    ...topUps.map((t) => ({ at: t.at, label: 'Top-up', amount: `+${t.sats}`, note: '' })),
+    ...spends.map((s) => ({
+      at: s.at,
+      label: 'Publish',
+      amount: `−${s.sats}`,
+      note: `<a href="${VIEWER}${s.eventId}" target="_blank" rel="noreferrer">${s.eventId.slice(0, 10)}… ↗</a> <span class="dim">${esc(s.relayUrl)}</span>`,
+    })),
+    ...refunds.map((r) => ({
+      at: r.at,
+      label: 'Refund',
+      amount: `−${r.sentSats + r.feeSats}`,
+      note: `<span class="dim">to ${esc(r.target)} · fee ${r.feeSats}</span>`,
+    })),
+  ].sort((a, b) => b.at - a.at);
+
   return `
     <div class="card">
-      <h3 style="margin:0 0 10px;font-size:15px">지갑 연결 (NWC)</h3>
+      <h3>Lightning wallet (NWC)</h3>
       ${
-        nwcSet
-          ? `<div class="notice info">연결됨. 이 데모는 이벤트당 1 sat 을 씁니다.</div>
-             <button class="action" id="nwc-clear">연결 해제</button>`
-          : `<div class="row"><input type="text" id="nwc-input" placeholder="nostr+walletconnect://..." /></div>
-             <div class="row"><button class="action primary" id="nwc-save">연결</button></div>
+        connected
+          ? `<div class="stat"><span>Wallet balance</span><b>${nwcBalanceSats === null ? '—' : `${nwcBalanceSats} sat`}</b></div>
+             <p class="dim small">Your actual lightning wallet, reached over NWC. Separate from the float below.</p>
+             <button class="action" id="nwc-clear">Disconnect</button>`
+          : `<div class="row"><input type="text" id="nwc-input" placeholder="nostr+walletconnect://…" /></div>
+             <div class="row"><button class="action primary" id="nwc-save">Connect</button></div>
              <div class="notice warn small">
-               연결 문자열은 이 브라우저에 저장됩니다(모든 nostr 웹클라와 동일).
-               <b>예산 한도가 걸린 전용 커넥션</b>을 쓰세요 — 라이브러리는 하드캡을 줄 수 없습니다.
+               The connection string is stored in this browser, like every other nostr web client.
+               Use a <b>dedicated connection with a budget cap</b> — a library cannot enforce a hard cap for you.
              </div>`
       }
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 10px;font-size:15px">float 잔액</h3>
+      <h3>Ecash float</h3>
+      <p class="dim small" style="margin-top:0">
+        Bought from a mint with the wallet above, then spent one sat at a time.
+        Held per mint — a token from one mint can't be spent at another.
+      </p>
       ${
         Object.keys(balances).length
           ? Object.entries(balances)
-              .map(([m, s]) => `<div class="stat"><span class="mono small">${esc(m)}</span><b>${s} sat</b></div>`)
-              .join('')
-          : '<div class="dim small">아직 충전하지 않았습니다.</div>'
-      }
-      <div class="notice info small" style="margin-top:12px">
-        ecash 는 베어러입니다. 브라우저 저장소는 내구성이 없으니(Safari 는 7일)
-        잔액을 작게 유지하고, 다 쓰면 환불하세요.
-      </div>
-    </div>
-
-    <div class="card">
-      <h3 style="margin:0 0 10px;font-size:15px">지출 내역</h3>
-      ${
-        spends.length
-          ? spends
-              .slice(-20)
-              .reverse()
               .map(
-                (s) =>
-                  `<div class="stat"><span class="small">${when(s.at / 1000)} <span class="dim mono">${esc(s.relayUrl)}</span></span><b>-${s.sats} sat</b></div>`,
+                ([m, s]) =>
+                  `<div class="stat"><span class="mono small">${esc(m)}</span><b>${s} sat</b></div>`,
               )
               .join('')
-          : '<div class="dim small">아직 지출이 없습니다.</div>'
+          : '<div class="dim small">Nothing yet. Replying will offer to top up.</div>'
       }
+      <div class="notice info small" style="margin-top:12px">
+        Ecash is bearer money and browser storage is not durable (Safari clears it after 7 days).
+        Keep the float small and sweep it when you're done.
+      </div>
     </div>
 
     <div class="card">
-      <h3 style="margin:0 0 10px;font-size:15px">전액 환불</h3>
-      <div class="row"><input type="text" id="refund-target" placeholder="라이트닝 주소 (user@domain) 또는 bolt11" /></div>
+      <h3>Sweep back to lightning</h3>
+      <div class="row"><input type="text" id="refund-target" placeholder="lightning address (you@domain) or bolt11" /></div>
       <div class="row">
-        <button class="action primary" id="refund-go" ${total < 2 ? 'disabled' : ''}>환불 (${total} sat)</button>
+        <button class="action" id="refund-estimate">How much can I sweep?</button>
+        <button class="action primary" id="refund-go" ${total < 2 ? 'disabled' : ''}>Sweep ${total} sat</button>
       </div>
+      ${sweepHint ? `<div class="notice info small">${sweepHint}</div>` : ''}
       <div class="notice info small">
-        melt 는 금액이 박힌 인보이스를 요구하는데 수수료를 미리 알 수 없습니다.
-        <b>라이트닝 주소</b>를 주면 저희가 금액을 정해 인보이스를 받아 수렴시킵니다.
-        (노드 펍키로는 불가 — melt 에 keysend 가 없습니다.)
+        Melting needs an invoice for a fixed amount, but the routing fee isn't known until the mint
+        quotes it — which is why "how much should I request?" has no good answer with a bare invoice.
+        Give a <b>lightning address</b> and we'll pick the amount and converge on it.
+        A raw node pubkey can't work: melt has no keysend.
       </div>
+    </div>
+
+    <div class="card">
+      <h3>History</h3>
+      ${
+        history.length
+          ? history
+              .slice(0, 40)
+              .map(
+                (h) =>
+                  `<div class="stat"><span class="small">${when(h.at)} · ${h.label} ${h.note}</span><b>${h.amount} sat</b></div>`,
+              )
+              .join('')
+          : '<div class="dim small">No activity yet.</div>'
+      }
     </div>`;
+}
+
+// ─── render ──────────────────────────────────────────────────────
+
+function dot(h: Health): string {
+  const color = h.state === 'up' ? 'var(--paid)' : h.state === 'down' ? 'var(--warn)' : 'var(--dim)';
+  return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color}"></span>`;
+}
+
+function healthBar(): string {
+  const line = (label: string, h: Health) =>
+    `<span class="row" style="gap:6px">${dot(h)}<span class="small">${label}</span>
+      <span class="dim small">${h.state === 'checking' ? 'checking…' : h.state === 'up' ? `${esc(h.detail)} · ${h.ms}ms` : esc(h.detail)}</span></span>`;
+  return `<div class="row" style="gap:18px;flex-wrap:wrap;margin-bottom:12px">
+    ${line('relay', relayHealth)}${line('mint', mintHealth)}
+    <span class="spacer"></span>
+    <button class="action" id="recheck">recheck</button>
+  </div>`;
 }
 
 function render() {
   app.innerHTML = `
     <header>
       <h1>pay-per-note</h1>
-      <p>답글·멘션·리액션만 1 sat. 읽기와 플레인 노트는 무료입니다.</p>
+      <p>Replies, mentions and reactions cost 1 sat. Reading and plain notes are free.</p>
     </header>
     <nav>
-      <button data-tab="feed" aria-selected="${tab === 'feed'}">피드</button>
-      <button data-tab="wallet" aria-selected="${tab === 'wallet'}">지갑</button>
+      <button data-tab="feed" aria-selected="${tab === 'feed'}">Feed</button>
+      <button data-tab="wallet" aria-selected="${tab === 'wallet'}">Wallet</button>
+      <button data-tab="about" aria-selected="${tab === 'about'}">Why</button>
     </nav>
+    ${healthBar()}
     ${status ? `<div class="notice ${status.startsWith('⚠') ? 'warn' : 'info'}">${esc(status)}</div>` : ''}
     ${
       tab === 'feed'
         ? `<div class="notice info small">
-             이 계정의 <b>inbox 릴레이는 유료 릴레이 하나뿐</b>입니다(NIP-65).
-             그래서 여기 보이는 <b>depth 1 답글은 전부 값을 치른 것</b>입니다.
-             더 깊은 답글은 각자의 inbox 를 거치므로 무료 릴레이를 탈 수 있습니다.
+             This account lists <b>one inbox relay</b>, and it charges (NIP-65).
+             Replies are read from there and nowhere else — so everything below was paid for.
+             It also means replies published elsewhere are invisible here. That's the point.
            </div>${renderFeed()}`
-        : renderWallet()
+        : tab === 'wallet'
+          ? renderWallet()
+          : ABOUT_HTML
     }`;
   wire();
 }
 
-// ─── 이벤트 배선 ─────────────────────────────────────────────────
+// ─── wiring ──────────────────────────────────────────────────────
+
+function findEvent(rootId: string, id: string): Event | null {
+  const tree = threads.get(rootId);
+  const walk = (n: ThreadNode): Event | null =>
+    n.event.id === id ? n.event : n.children.reduce<Event | null>((f, c) => f ?? walk(c), null);
+  return tree ? walk(tree) : null;
+}
 
 function wire() {
   app.querySelectorAll<HTMLButtonElement>('nav button').forEach((b) => {
     b.onclick = () => {
-      tab = b.dataset['tab'] as typeof tab;
+      tab = b.dataset['tab'] as Tab;
       if (tab === 'wallet') void refreshWallet();
       else render();
     };
   });
+
+  const recheck = app.querySelector<HTMLButtonElement>('#recheck');
+  if (recheck) recheck.onclick = () => void checkHealth();
 
   app.querySelectorAll<HTMLButtonElement>('[data-reply]').forEach((b) => {
     b.onclick = () => {
@@ -335,17 +397,15 @@ function wire() {
       }
       slot.innerHTML = `
         <div style="margin-top:8px">
-          <textarea placeholder="답글을 입력하세요 (1 sat)"></textarea>
+          <textarea placeholder="Your reply (1 sat)"></textarea>
           <div class="row" style="margin-top:6px">
-            <button class="action primary" data-send="${id}" data-root="${rootId}">보내기 · 1 sat</button>
+            <button class="action primary" data-send>Send · 1 sat</button>
           </div>
         </div>`;
-      const send = slot.querySelector<HTMLButtonElement>('[data-send]')!;
       const ta = slot.querySelector('textarea')!;
-      send.onclick = () => {
+      slot.querySelector<HTMLButtonElement>('[data-send]')!.onclick = () => {
         const root = notes.find((n) => n.id === rootId)!;
-        const parent = findEvent(rootId, id) ?? root;
-        if (ta.value.trim()) void submitReply(root, parent, ta.value.trim());
+        if (ta.value.trim()) void submitReply(root, findEvent(rootId, id) ?? root, ta.value.trim());
       };
     };
   });
@@ -354,88 +414,131 @@ function wire() {
     b.onclick = () => {
       const rootId = b.dataset['root']!;
       const root = notes.find((n) => n.id === rootId)!;
-      const target = findEvent(rootId, b.dataset['react']!) ?? root;
-      void react(root, target);
+      void react(root, findEvent(rootId, b.dataset['react']!) ?? root);
     };
   });
 
   const save = app.querySelector<HTMLButtonElement>('#nwc-save');
-  if (save) {
+  if (save)
     save.onclick = () => {
-      const input = app.querySelector<HTMLInputElement>('#nwc-input')!;
-      if (!input.value.trim()) return;
-      setNwc(input.value.trim());
+      const v = app.querySelector<HTMLInputElement>('#nwc-input')!.value.trim();
+      if (v) {
+        setNwc(v);
+        location.reload();
+      }
+    };
+
+  const clear = app.querySelector<HTMLButtonElement>('#nwc-clear');
+  if (clear)
+    clear.onclick = () => {
+      setNwc(null);
       location.reload();
     };
-  }
-  const clear = app.querySelector<HTMLButtonElement>('#nwc-clear');
-  if (clear) clear.onclick = () => { setNwc(null); location.reload(); };
+
+  const estimate = app.querySelector<HTMLButtonElement>('#refund-estimate');
+  if (estimate)
+    estimate.onclick = async () => {
+      const target = app.querySelector<HTMLInputElement>('#refund-target')!.value.trim();
+      if (!target.includes('@')) {
+        sweepHint = 'Estimating needs a lightning address — with a bare invoice you pick the amount.';
+        render();
+        return;
+      }
+      await withStatus('Asking the mint…', async () => {
+        const out = await wallet.float.estimateRefund(target);
+        sweepHint = out.length
+          ? out
+              .map(
+                (o) =>
+                  `${o.mint}: holding ${o.totalSats} sat → request an invoice for <b>${o.sendSats} sat</b> (fee reserve ${o.feeSats}).`,
+              )
+              .join('<br>')
+          : 'Not enough to cover the routing fee.';
+      });
+    };
 
   const refund = app.querySelector<HTMLButtonElement>('#refund-go');
-  if (refund) {
+  if (refund)
     refund.onclick = async () => {
       const target = app.querySelector<HTMLInputElement>('#refund-target')!.value.trim();
       if (!target) return;
-      refund.disabled = true;
-      status = '환불 중…';
-      render();
-      try {
+      await withStatus('Sweeping…', async () => {
+        // `refundAll` (bare invoice) and `refundToLightningAddress` report different shapes.
         const out = target.includes('@')
-          ? await wallet.float.refundToLightningAddress(target)
-          : await wallet.float.refundAll();
-        status = out.length ? `환불 완료: ${JSON.stringify(out)}` : '환불할 잔액이 없습니다.';
-      } catch (e) {
-        status = `⚠ ${(e as Error).message}`;
-      }
+          ? (await wallet.float.refundToLightningAddress(target)).map((o) => ({
+              sent: o.sentSats,
+              fee: o.feeSats,
+            }))
+          : (await wallet.float.refundAll()).map((o) => ({ sent: o.sats, fee: 0 }));
+        sweepHint = out.length
+          ? out.map((o) => `Sent ${o.sent} sat${o.fee ? ` (fee ${o.fee})` : ''}.`).join(' ')
+          : 'Nothing to sweep.';
+      });
       await refreshWallet();
     };
-  }
-}
-
-function findEvent(rootId: string, id: string): Event | null {
-  const tree = threads.get(rootId);
-  if (!tree) return null;
-  const walk = (n: ThreadNode): Event | null =>
-    n.event.id === id ? n.event : n.children.reduce<Event | null>((f, c) => f ?? walk(c), null);
-  return walk(tree);
 }
 
 async function refreshWallet() {
-  balances = await wallet.float.balance();
-  spends = await wallet.float.spendHistory();
+  [balances, spends, topUps, refunds] = await Promise.all([
+    wallet.float.balance(),
+    wallet.float.spendHistory(),
+    wallet.float.topUpHistory(),
+    wallet.float.refundHistory(),
+  ]);
+  render();
+
+  const uri = getNwc();
+  if (uri) {
+    try {
+      nwcBalanceSats = Math.floor((await new NwcClient(uri).getBalance()).balance / 1000);
+    } catch {
+      nwcBalanceSats = null;
+    }
+    render();
+  }
+}
+
+async function checkHealth() {
+  relayHealth = { state: 'checking' };
+  mintHealth = { state: 'checking' };
+  render();
+  [relayHealth, mintHealth] = await Promise.all([checkRelay(DEMO_RELAY), checkMint(MINT)]);
   render();
 }
 
-// ─── 충전 확인 (비블로킹) ────────────────────────────────────────
+// ─── top-up consent (non-blocking) ───────────────────────────────
 //
-// `confirm()` 을 쓰면 메인 스레드가 멈춰 릴레이 연결이 idle 로 닫히고
-// 이어지는 발행이 `publish timed out` 으로 죽는다. 화면으로 묻는다.
+// `confirm()` freezes the main thread; the websocket then idles out and the
+// following publish dies with "publish timed out". Ask in-page instead.
 
-setTopUpAsker(({ mint, sats }) =>
-  new Promise<boolean>((resolve) => {
-    const box = document.createElement('div');
-    box.className = 'card';
-    box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:520px;z-index:50';
-    box.innerHTML = `
-      <div><b>잔액이 부족합니다.</b></div>
-      <div class="small dim mono" style="margin:6px 0">${esc(mint)}</div>
-      <div class="row" style="margin-top:8px">
-        <button class="action primary" data-yes>${sats} sat 충전</button>
-        <button class="action" data-no>취소</button>
-      </div>`;
-    document.body.appendChild(box);
-    const done = (v: boolean) => {
-      box.remove();
-      resolve(v);
-    };
-    box.querySelector('[data-yes]')!.addEventListener('click', () => done(true));
-    box.querySelector('[data-no]')!.addEventListener('click', () => done(false));
-  }),
+setTopUpAsker(
+  ({ mint, sats }) =>
+    new Promise<boolean>((resolve) => {
+      const box = document.createElement('div');
+      box.className = 'card';
+      box.style.cssText =
+        'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:520px;z-index:50';
+      box.innerHTML = `
+        <div><b>Not enough ecash.</b></div>
+        <div class="small dim mono" style="margin:6px 0">${esc(mint)}</div>
+        <div class="row" style="margin-top:8px">
+          <button class="action primary" data-yes>Top up ${sats} sat</button>
+          <button class="action" data-no>Cancel</button>
+        </div>`;
+      document.body.appendChild(box);
+      const done = (v: boolean) => {
+        box.remove();
+        resolve(v);
+      };
+      box.querySelector('[data-yes]')!.addEventListener('click', () => done(true));
+      box.querySelector('[data-no]')!.addEventListener('click', () => done(false));
+    }),
 );
 
-// ─── 시작 ────────────────────────────────────────────────────────
+// ─── start ───────────────────────────────────────────────────────
 
 void requestPersistence();
-void wallet.float.reconcile().catch(() => {}); // 확정 못 받은 결제 회수
+void wallet.float.reconcile().catch(() => {}); // recover payments we never got an answer for
+void checkHealth();
 void loadFeed();
-console.info('데모 신원:', myPubkey());
+console.info('demo identity:', myPubkey());

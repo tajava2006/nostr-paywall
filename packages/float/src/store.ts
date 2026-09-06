@@ -30,6 +30,18 @@ export interface FloatState {
   topUps: { at: number; sats: number }[];
   /** 지출 이력. "언제 어느 릴레이의 어느 이벤트에 얼마 썼는지" — UI 가 보여줄 유일한 근거다. */
   spends?: SpendRecord[];
+  /** 환불 이력. */
+  refunds?: RefundRecord[];
+}
+
+export interface RefundRecord {
+  at: number;
+  mint: string;
+  /** 실제로 상대가 받은 금액. */
+  sentSats: number;
+  /** 라이트닝 라우팅 수수료(예약분에서 change 를 뺀 실비). */
+  feeSats: number;
+  target: string;
 }
 
 export interface SpendRecord {
@@ -41,7 +53,7 @@ export interface SpendRecord {
 }
 
 export function emptyState(): FloatState {
-  return { version: 1, mints: {}, topUps: [], spends: [] };
+  return { version: 1, mints: {}, topUps: [], spends: [], refunds: [] };
 }
 
 export interface FloatStore {

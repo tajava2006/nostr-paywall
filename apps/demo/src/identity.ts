@@ -1,7 +1,7 @@
-// 데모 신원 — 방문자마다 브라우저에 랜덤 키 하나.
+// Demo identity: one random key per visitor, kept in the browser.
 //
-// 로그인이 없다. 데모에서 할 수 있는 일이 "덧글 달기"뿐이라 계정을 요구할 이유가 없다.
-// 키는 브라우저에만 남고, 지우면 새 사람이 된다.
+// There is no login. The only thing you can do here is reply, so demanding an account
+// would be theatre. Clear browser storage and you're a new person.
 
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
 import type { Event, EventTemplate } from 'nostr-tools/core';
@@ -29,13 +29,14 @@ export function sign(template: EventTemplate): Event {
 }
 
 /**
- * 내 릴레이 목록(kind 10002)을 알린다.
+ * Announce our relay list (kind 10002).
  *
- * **첫 덧글 시도 때만** 부른다. 방문만 한 사람이 이벤트를 남기면 그건 스팸이다.
+ * Called on the **first write only**. A visitor who merely reads should not leave
+ * events behind — that would be spam by our own definition.
  *
- * 유료 릴레이 하나를 read+write 로 광고한다(마커 없음 = 둘 다, NIP-65).
- * 우리 술어상 kind 10002 는 과금 대상이 아니라 이 발행은 공짜다 —
- * "남에게 노티가 가는 것만 과금"이라는 원칙이 여기서 그대로 작동한다.
+ * Advertises the paid relay as both read and write (no marker = both, NIP-65).
+ * kind 10002 is not in the charged set, so this publish is free: the rule
+ * "only charge what demands someone's attention" pays off right here.
  */
 export async function announceRelayListOnce(
   publish: (event: Event, relays: string[]) => Promise<void>,
@@ -51,10 +52,10 @@ export async function announceRelayListOnce(
   localStorage.setItem(ANNOUNCED, String(Date.now()));
 }
 
-// ─── NWC 연결 문자열 ─────────────────────────────────────────────
+// ─── NWC connection string ───────────────────────────────────────
 //
-// 브라우저 저장소에 남는 건 모든 nostr 웹 클라와 같다. 예산 한도가 걸린
-// 전용 커넥션을 쓰는 게 진짜 방어다.
+// Stored in the browser, same as every other nostr web client. The real defence
+// is a dedicated connection with a budget cap, not where we put the string.
 
 const NWC = 'nostr-paywall-demo:nwc';
 

@@ -1,43 +1,53 @@
 # @nostr-paywall/float
 
-유료 nostr 릴레이용 **클라이언트 ecash float**. NWC 로 한 번 충전하고 이벤트당 1 sat 씩 쓴다.
+Client-side ecash float. Top up once over NWC, spend a sat per event, sweep the rest back.
 
 ```ts
 import { EcashFloat, createFloatPayer, createDefaultStore } from '@nostr-paywall/float';
 import { PaidPool } from '@nostr-paywall/client';
 
 const float = new EcashFloat({
-  store: createDefaultStore(),          // 브라우저/Tauri → IndexedDB, Node → 파일 경로
+  store: createDefaultStore(),        // IndexedDB in a browser/Tauri, a file under Node
   funding: {
-    payInvoice: (bolt11) => app.wallet.payInvoice(bolt11),   // 충전 (NWC pay_invoice)
-    makeInvoice: (sats) => app.wallet.makeInvoice(sats),     // 환불 (NWC make_invoice)
+    payInvoice: (bolt11) => app.wallet.payInvoice(bolt11),   // top up
+    makeInvoice: (sats) => app.wallet.makeInvoice(sats),     // sweep back
   },
   limits: { maxFloatSats: 500, maxTopUpPerPeriodSats: 2000 },
-  onTopUpRequired: async ({ sats }) => confirm(`${sats} sat 충전할까요?`),
+  onTopUpRequired: async ({ sats }) => askTheUser(sats),
 });
 
 const pool = new PaidPool({ payer: createFloatPayer(float) });
 ```
 
-## 왜 라이브러리가 돈을 갖나
+## Why the library holds money
 
-NWC 코어에 keysend 가 없어서(NIP-47), 릴레이가 무엇을 받든 앱이 직접 낼 수는 없다.
-**민트 견적(NUT-04)이 bolt11 을 주므로** `pay_invoice` 하나로 ecash 를 살 수 있고,
-그게 레일 무관성을 얻는 유일한 경로다. 앱은 인보이스 결제/발행 두 개만 제공하면 된다.
+NWC has no keysend in its core method set, so an app cannot pay a relay directly whatever rail
+the relay wants. But a **mint quote returns a bolt11 invoice** (NUT-04), so `pay_invoice` alone is
+enough to buy ecash — and that's the only path to being rail-agnostic. The app supplies two
+functions and never the connection string.
 
-## 안전
+## Safety
 
-- **`autoTopUp` 기본 false.** 라이브러리 init 만으로 유저 돈이 나가면 안 된다.
-  `onTopUpRequired` 로 앱이 물어보거나, 명시적으로 켜야 한다.
-- **한도는 라이브러리 자체 회계다. 암호학적 보증이 아니다.** 진짜 하드캡은
-  전용 NWC 커넥션 예산에서만 나온다.
-- **float 을 작게 유지하라.** 브라우저 저장소는 내구성이 없고(Safari ITP 는 7일)
-  ecash 는 베어러라 XSS 면 그대로 도난이다. 상한이 곧 노출 한도다.
-- **단일 writer 락.** 탭 두 개가 같은 proofs 를 쓰면 한쪽이 실패하고, 더 나쁘게는
-  서로의 저장분을 덮어써 ecash 를 잃는다. Web Locks 로 막고, 없으면 프로세스 내 직렬화.
-- **pending 을 버리지 않는다.** 릴레이 응답을 못 받은 토큰은 보관했다가
-  `reconcile()` 이 민트에 물어(NUT-07) 미사용이면 되살린다. 민트에 못 물어보면 **보류**한다.
+- **`autoTopUp` defaults to false.** Constructing a library must never spend a user's money.
+- **Limits here are bookkeeping, not a guarantee.** A real hard cap only comes from the budget on
+  a dedicated NWC connection.
+- **Keep the float small.** Browser storage isn't durable (Safari clears it after 7 days) and
+  ecash is bearer money, so XSS is theft. The cap is your exposure.
+- **Single-writer lock.** Two tabs spending the same proofs is the small problem; two tabs
+  overwriting each other's saved state loses ecash outright. Web Locks where available.
+- **Pending payments are never discarded.** A token handed to a relay with no answer is kept and
+  later checked against the mint (NUT-07); unspent ones return to the balance. If the mint can't
+  be reached we hold, rather than guess.
 
-설계 문서: https://github.com/tajava2006/nostr-paywall
+## Sweeping back
 
-> PoC. mainnet 미검증.
+Melting needs an invoice for a fixed amount, but the routing fee isn't known until the mint
+quotes it — so "how much should I ask for?" has no good answer with a bare invoice. Give a
+**lightning address** and the library picks the amount and converges on it, returning unused fee
+reserve (NUT-08) to the float. `estimateRefund()` reports the number without melting.
+
+A bare node pubkey can't work: melt has no keysend.
+
+Design notes: https://github.com/tajava2006/nostr-paywall
+
+> Proof of concept.

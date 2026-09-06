@@ -76,5 +76,10 @@ input[type='text'] {
 .stat:last-child { border-bottom: 0; }
 .stat b { font-variant-numeric: tabular-nums; }
 
+.card h3 { margin: 0 0 10px; font-size: 15px; }
+.card p { margin: 8px 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 .dim { color: var(--dim); }
 .small { font-size: 12px; }

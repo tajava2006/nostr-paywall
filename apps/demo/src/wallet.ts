@@ -1,8 +1,8 @@
-// 지갑 배선 — NWC ↔ float ↔ PaidPool.
+// Wallet wiring: NWC ↔ float ↔ PaidPool.
 //
-// 앱이 라이브러리에 주는 건 `payInvoice`/`makeInvoice` 두 개뿐이다.
-// NWC 연결 문자열 자체는 넘기지 않는다 — 넘기면 앱 전체 예산을 통째로 상속시키는 꼴이고,
-// 라이브러리가 NWC 클라이언트를 재구현하게 된다.
+// The app hands the library two functions, `payInvoice` and `makeInvoice` — never the
+// NWC connection string. Handing over the string would give the library the app's whole
+// budget and force it to reimplement an NWC client.
 
 import {
   EcashFloat,
