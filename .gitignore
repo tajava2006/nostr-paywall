@@ -4,3 +4,6 @@ dist/
 .DS_Store
 drill-*.json
 apps/*/dist/
+
+# nsyte writes this beside the config when it edits it
+.nsite/config.json.backup

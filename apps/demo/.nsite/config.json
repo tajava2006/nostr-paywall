@@ -12,9 +12,9 @@
     "wss://nostr.hoppe-relay.it.com"
   ],
   "servers": [
-    "https://blossom.primal.net",
-    "https://cdn.satellite.earth",
-    "https://nostr.download"
+    "https://blossom.band",
+    "https://nostr.download",
+    "https://blossom.f7z.io"
   ],
   "bunkerPubkey": "5d16380192e8af61845d499df86e66fcb147e66ef922fcbdefe4f3a250d2dd26"
 }
