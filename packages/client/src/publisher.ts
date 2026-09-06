@@ -153,7 +153,12 @@ export async function publishToRelay(
     // catch 로 안 온다 — 학습 경로가 통째로 죽는다(실측으로 잡음).
     return await (await deps.getRelay()).publish(event);
   } catch (e) {
-    const outcome = parseOkReason(false, (e as Error).message);
+    // ⚠️ 거부값이 Error 라는 보장이 없다. nostr-tools 의 `connect()` 는
+    // `reject('connection timed out')` 처럼 **문자열**로 거부한다(abstract-relay.ts).
+    // `(e as Error).message` 로 읽으면 undefined 가 되고, 그게 파서에서 터지면서
+    // **진짜 원인(연결 실패)을 TypeError 로 덮어버린다** — 실측으로 겪었다.
+    const reason = e instanceof Error ? e.message : typeof e === 'string' ? e : String(e);
+    const outcome = parseOkReason(false, reason);
     if (outcome.kind !== 'payment-required') throw e;
 
     // 여기서야 NIP-11 을 읽는다. 선제적으로 읽는 클라는 없지만

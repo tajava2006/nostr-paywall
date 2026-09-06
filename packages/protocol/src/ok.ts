@@ -75,8 +75,15 @@ function splitPrefix(reason: string): { prefix: string; rest: string } {
   return { prefix: reason.slice(0, i).trim(), rest: reason.slice(i + 1).trim() };
 }
 
-/** 환불 토큰을 뽑는다. `refund=<token>` — 토큰은 공백 없는 문자열이다. */
-export function extractRefundToken(reason: string): string | null {
+/**
+ * 환불 토큰을 뽑는다. `refund=<token>` — 토큰은 공백 없는 문자열이다.
+ *
+ * 문자열이 아닌 입력에도 안 터진다. 호출자가 넘기는 값이 늘 문자열이란 보장이 없다 —
+ * 예컨대 nostr-tools 의 `connect()` 는 Error 가 아니라 **평범한 문자열**로 reject 해서
+ * `(e as Error).message` 가 `undefined` 가 된다(실측). 여기서 던지면 진짜 원인이 가려진다.
+ */
+export function extractRefundToken(reason: unknown): string | null {
+  if (typeof reason !== 'string') return null;
   const at = reason.indexOf(REFUND_KEY);
   if (at < 0) return null;
   const token = reason.slice(at + REFUND_KEY.length).trim().split(/\s/)[0];
@@ -90,8 +97,9 @@ export function extractRefundToken(reason: string): string | null {
  * `new Error(reason)`으로 reject 하므로(abstract-relay.ts), 래퍼는 양쪽에서
  * 이 함수를 그대로 부르면 된다.
  */
-export function parseOkReason(accepted: boolean, reason: string): OkOutcome {
-  const { prefix, rest } = splitPrefix(reason ?? '');
+export function parseOkReason(accepted: boolean, reason: unknown): OkOutcome {
+  const text = typeof reason === 'string' ? reason : '';
+  const { prefix, rest } = splitPrefix(text);
 
   if (accepted) {
     // 수락 시에도 접두사가 붙을 수 있다 (NIP-01의 `duplicate:` 예시).
@@ -99,7 +107,7 @@ export function parseOkReason(accepted: boolean, reason: string): OkOutcome {
   }
 
   // 환불은 접두사보다 우선한다 — 돈이 딸려 오는 응답을 일반 오류로 흘리면 그대로 잃는다.
-  const token = extractRefundToken(reason);
+  const token = extractRefundToken(text);
   if (token !== null) {
     // `message` 는 사람에게 보여줄 문장이다. 기계용 토큰 절은 잘라낸다.
     const cut = rest.indexOf(REFUND_KEY);

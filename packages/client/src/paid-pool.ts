@@ -22,6 +22,8 @@ export interface PaidPoolOptions {
 const UNKNOWN: RelayPolicy = { kind: 'unknown' };
 
 export class PaidPool extends SimplePool {
+  /** 결제 뒤 재연결 대기. 기본 3s 는 LN 결제 직후엔 짧다. */
+  connectionTimeoutMs = 10_000;
   private readonly policies = new Map<string, RelayPolicy>();
   private readonly opts: PaidPoolOptions;
   private hydrated: Promise<void> | undefined;
@@ -73,7 +75,11 @@ export class PaidPool extends SimplePool {
         {
           payer: this.opts.payer ?? (() => null),
           // 매번 새로 얻는다. 결제로 시간이 흐르는 동안 연결이 닫힐 수 있다.
-          getRelay: async () => (await this.ensureRelay(url)) as unknown as RelayLike,
+          // 연결 대기를 넉넉히 준다 — 결제 직후 재연결이라 기본값(3s)은 빡빡하다.
+          getRelay: async () =>
+            (await this.ensureRelay(url, {
+              connectionTimeout: this.connectionTimeoutMs,
+            })) as unknown as RelayLike,
           getPolicy: (u) => this.getPolicy(u),
           setPolicy: (u, p) => this.setPolicy(u, p),
           fetchRelayInformation:

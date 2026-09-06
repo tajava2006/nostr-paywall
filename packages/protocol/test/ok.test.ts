@@ -91,3 +91,17 @@ describe('extractRefundToken', () => {
     expect(extractRefundToken('refund=')).toBeNull();
   });
 });
+
+describe('문자열이 아닌 입력에도 안 터진다', () => {
+  it('undefined·객체·null 을 줘도 던지지 않는다', () => {
+    // nostr-tools 의 connect() 는 Error 가 아니라 문자열로 reject 한다.
+    // `(e as Error).message` 가 undefined 가 되어 여기로 흘러온 적이 있다 —
+    // 여기서 던지면 진짜 원인(연결 실패)이 TypeError 로 덮인다.
+    for (const junk of [undefined, null, 42, {}, []]) {
+      expect(() => parseOkReason(false, junk as never)).not.toThrow();
+      expect(() => extractRefundToken(junk as never)).not.toThrow();
+      expect(extractRefundToken(junk as never)).toBeNull();
+    }
+    expect(parseOkReason(false, undefined as never).kind).toBe('rejected');
+  });
+});
