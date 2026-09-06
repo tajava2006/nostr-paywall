@@ -21,7 +21,7 @@ import {
   relayListFor,
 } from './outbox.js';
 import { buildReaction, buildReply, buildThread, type ThreadNode } from './thread.js';
-import { createWallet, requestPersistence } from './wallet.js';
+import { createWallet, requestPersistence, setTopUpAsker } from './wallet.js';
 
 /** 데모 대상 계정. 이 사람의 inbox 는 유료 릴레이 하나뿐이다. */
 const AUTHOR = '953878bc1ed3647168b5d0ddd29190bed95756c2296b8f48ded8a41b7c270841';
@@ -405,6 +405,33 @@ async function refreshWallet() {
   spends = await wallet.float.spendHistory();
   render();
 }
+
+// ─── 충전 확인 (비블로킹) ────────────────────────────────────────
+//
+// `confirm()` 을 쓰면 메인 스레드가 멈춰 릴레이 연결이 idle 로 닫히고
+// 이어지는 발행이 `publish timed out` 으로 죽는다. 화면으로 묻는다.
+
+setTopUpAsker(({ mint, sats }) =>
+  new Promise<boolean>((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'card';
+    box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:520px;z-index:50';
+    box.innerHTML = `
+      <div><b>잔액이 부족합니다.</b></div>
+      <div class="small dim mono" style="margin:6px 0">${esc(mint)}</div>
+      <div class="row" style="margin-top:8px">
+        <button class="action primary" data-yes>${sats} sat 충전</button>
+        <button class="action" data-no>취소</button>
+      </div>`;
+    document.body.appendChild(box);
+    const done = (v: boolean) => {
+      box.remove();
+      resolve(v);
+    };
+    box.querySelector('[data-yes]')!.addEventListener('click', () => done(true));
+    box.querySelector('[data-no]')!.addEventListener('click', () => done(false));
+  }),
+);
 
 // ─── 시작 ────────────────────────────────────────────────────────
 

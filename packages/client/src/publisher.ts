@@ -26,6 +26,15 @@ export interface RelayLike {
 
 export interface PublishDeps {
   payer: Payer;
+  /**
+   * 릴레이 핸들을 **매번 새로 얻는다.**
+   *
+   * 결제가 두 발행 시도 사이에 끼어 있어서(사용자 확인 + LN 결제) 그동안
+   * 풀의 idle 타임아웃(기본 20s)이 연결을 닫아버린다. 닫힌 핸들로 재발행하면
+   * 재연결을 기다리다 publish 타임아웃(4.4s)에 걸려 `publish timed out` 이 난다.
+   * 실측으로 잡은 문제 — 결제 직전에 다시 얻어야 한다.
+   */
+  getRelay(): Promise<RelayLike>;
   getPolicy(url: string): RelayPolicy;
   setPolicy(url: string, policy: RelayPolicy): void;
   /** NIP-11 문서를 가져온다. 거부당한 뒤에만 부른다(PLAN D8). */
@@ -114,15 +123,14 @@ async function pay(
  */
 export async function publishToRelay(
   deps: PublishDeps,
-  relay: RelayLike,
+  url: string,
   event: NostrEventLike,
 ): Promise<string> {
-  const url = relay.url;
   const policy = deps.getPolicy(url);
 
   if (policy.kind === 'paid') {
     const price = priceFor(event, policy.terms);
-    if (!price.charge) return relay.publish(event);
+    if (!price.charge) return (await deps.getRelay()).publish(event);
     if (!policy.terms.envelopeInEventMessage) {
       throw new PaymentUnavailableError(
         url,
@@ -131,7 +139,8 @@ export async function publishToRelay(
       );
     }
     const envelope = await pay(deps, url, event, policy, price.amountMsat);
-    return publishWithEnvelope(relay, event, envelope);
+    // 결제 뒤에 다시 얻는다 — 그 사이 연결이 닫혔을 수 있다.
+    return publishWithEnvelope(await deps.getRelay(), event, envelope);
   }
 
   // 'unknown' | 'free' — 일단 표준 형태로 보낸다.
@@ -142,7 +151,7 @@ export async function publishToRelay(
     //
     // ⚠️ `await` 필수. try 블록에서 await 없이 promise 를 return 하면 rejection 이
     // catch 로 안 온다 — 학습 경로가 통째로 죽는다(실측으로 잡음).
-    return await relay.publish(event);
+    return await (await deps.getRelay()).publish(event);
   } catch (e) {
     const outcome = parseOkReason(false, (e as Error).message);
     if (outcome.kind !== 'payment-required') throw e;
@@ -171,6 +180,6 @@ export async function publishToRelay(
       );
     }
     const envelope = await pay(deps, url, event, learned, price.amountMsat);
-    return publishWithEnvelope(relay, event, envelope);
+    return publishWithEnvelope(await deps.getRelay(), event, envelope);
   }
 }

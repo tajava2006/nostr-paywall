@@ -49,15 +49,31 @@ export function createWallet(allowedMints: string[]): Wallet {
     limits: { maxFloatSats: 500, maxTopUpPerPeriodSats: 2000 },
     topUpSats: 100,
     // 라이브러리 init 만으로 돈이 나가면 안 된다. 항상 물어본다.
-    onTopUpRequired: async ({ sats, mint }) =>
-      confirm(`잔액이 부족합니다.\n\n${mint}\n에서 ${sats} sat 을 충전할까요?`),
+    //
+    // ⚠️ `confirm()` 같은 **블로킹 대화상자를 쓰면 안 된다.** 메인 스레드가 멈춘 동안
+    // 웹소켓 메시지도 타이머도 처리되지 않아, 그 사이 릴레이 연결이 idle 로 닫히고
+    // 이어지는 발행이 `publish timed out` 으로 죽는다(실측). 비블로킹으로 묻는다.
+    onTopUpRequired: (info) => askTopUp(info),
   });
 
   const pool = new PaidPool({
     payer: createFloatPayer(float, { allowedMints }),
   });
+  // 결제(사용자 확인 + LN)가 두 발행 시도 사이에 끼므로 기본 20s 로는 연결이 닫힌다.
+  pool.idleTimeout = 0;
 
   return { float, pool, connected: Boolean(uri) };
+}
+
+/** 비블로킹 충전 확인. 앱이 화면에 물어보고 Promise 로 답한다. */
+let topUpAsker: ((info: { mint: string; sats: number }) => Promise<boolean>) | undefined;
+
+export function setTopUpAsker(fn: typeof topUpAsker): void {
+  topUpAsker = fn;
+}
+
+function askTopUp(info: { mint: string; sats: number }): Promise<boolean> {
+  return topUpAsker ? topUpAsker(info) : Promise.resolve(false);
 }
 
 /** 저장소 축출 방어. 승인 못 받으면 float 상한을 더 낮추는 게 맞다. */

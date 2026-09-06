@@ -69,17 +69,18 @@ export class PaidPool extends SimplePool {
   publish(relays: string[], event: Event): Promise<string>[] {
     return relays.map(async (url) => {
       await this.hydrate();
-      const relay = (await this.ensureRelay(url)) as unknown as RelayLike;
       return publishToRelay(
         {
           payer: this.opts.payer ?? (() => null),
+          // 매번 새로 얻는다. 결제로 시간이 흐르는 동안 연결이 닫힐 수 있다.
+          getRelay: async () => (await this.ensureRelay(url)) as unknown as RelayLike,
           getPolicy: (u) => this.getPolicy(u),
           setPolicy: (u, p) => this.setPolicy(u, p),
           fetchRelayInformation:
             this.opts.fetchRelayInformation ??
             ((u) => nip11.fetchRelayInformation(u) as Promise<unknown>),
         },
-        relay,
+        url,
         event,
       );
     });
