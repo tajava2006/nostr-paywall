@@ -163,3 +163,19 @@ describe('collect — 실제 수납', () => {
     );
   });
 });
+
+describe('금액 파싱 — cashu-ts 의 Amount 는 숫자가 아니다', () => {
+  it('Amount 객체·문자열·bigint 를 전부 더한다', async () => {
+    // 봉투는 JSON 으로 오므로 "1" 문자열이지만, 다른 경로로 오면 {value:1n} 일 수 있다.
+    // 후자를 Number() 하면 NaN 이라 수납 금액이 조용히 틀어진다.
+    const c = collector({
+      receive: async () => [
+        { amount: 1, secret: 'a', id: KSID, C: '02' },
+        { amount: '2', secret: 'b', id: KSID, C: '02' },
+        { amount: { value: 4n }, secret: 'c', id: KSID, C: '02' },
+      ] as never,
+    });
+    const r = await c.collect(envelope({ token: tok(MINT, [7], ['x']) }), { ...ctx, priceMsat: 1000 });
+    expect(r.amountMsat).toBe(7000);
+  });
+});

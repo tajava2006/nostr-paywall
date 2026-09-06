@@ -6,6 +6,7 @@
 
 import type { Proof } from '@cashu/cashu-ts';
 import type { PaymentEnvelope } from '@nostr-paywall/protocol';
+import { normalizeProofs, sumSats } from './amount.js';
 import { createLock, type FloatLock } from './lock.js';
 import { findAffordableAmount, requestInvoice, resolveLightningAddress } from './lnurl.js';
 import {
@@ -69,8 +70,8 @@ function bucket(state: FloatState, mint: string): MintBucket {
   return state.mints[mint]!;
 }
 
-const sats = (proofs: readonly { amount: unknown }[]) =>
-  proofs.reduce((s, p) => s + Number(p.amount), 0);
+// 저장소에 따라 amount 모양이 달라지므로 정규화 헬퍼를 쓴다(amount.ts 참조).
+const sats = sumSats;
 
 export class InsufficientFloatError extends Error {
   readonly name = 'InsufficientFloatError';
@@ -88,11 +89,26 @@ export class EcashFloat {
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
   }
 
+  /**
+   * 상태를 읽으면서 proof 금액을 정규화한다.
+   *
+   * 이미 저장된 것도 살려야 한다 — 브라우저에 `{value: 1n}` 모양으로 남은 ecash 가
+   * 있을 수 있고, 그걸 못 읽으면 그대로 잃는 것이다.
+   */
+  private async loadState(): Promise<FloatState> {
+    const state = (await this.opts.store.load()) ?? emptyState();
+    for (const b of Object.values(state.mints)) {
+      b.proofs = normalizeProofs(b.proofs) as Proof[];
+      for (const p of b.pending) p.proofs = normalizeProofs(p.proofs) as Proof[];
+    }
+    return state;
+  }
+
   private async mutate<T>(fn: (state: FloatState) => Promise<T>): Promise<T> {
     // 읽기·수정·쓰기 전체가 하나의 임계구역이어야 한다. 아니면 탭 두 개가
     // 서로의 저장분을 덮어써서 ecash 를 잃는다.
     return this.lock.run(async () => {
-      const state = (await this.opts.store.load()) ?? emptyState();
+      const state = await this.loadState();
       const out = await fn(state);
       await this.opts.store.save(state);
       return out;
@@ -101,7 +117,7 @@ export class EcashFloat {
 
   /** 민트별 잔액(sat). */
   async balance(): Promise<Record<string, number>> {
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     return Object.fromEntries(
       Object.entries(state.mints).map(([mint, b]) => [mint, sats(b.proofs)]),
     );
@@ -156,7 +172,7 @@ export class EcashFloat {
 
     const proofs = await wallet.mintProofsBolt11(amount, quote.quote);
     await this.mutate(async (state) => {
-      bucket(state, mint).proofs.push(...proofs);
+      bucket(state, mint).proofs.push(...normalizeProofs(proofs));
       state.topUps.push({ at: now, sats: amount });
     });
     return true;
@@ -176,6 +192,13 @@ export class EcashFloat {
     ctx: { eventId: string; relayUrl: string },
   ): Promise<PaymentEnvelope> {
     let have = (await this.balance())[mint] ?? 0;
+    // NaN 이면 `NaN < x` 가 false 라 충전을 건너뛰고 조용히 실패한다.
+    // 잔액을 못 읽는 건 0 보다 나쁜 상태이므로 명확히 끊는다.
+    if (!Number.isFinite(have)) {
+      throw new Error(
+        `${mint} 잔액을 읽을 수 없다(NaN). 저장된 proof 의 amount 형식이 깨졌을 수 있다.`,
+      );
+    }
     if (have < amountSats) {
       await this.topUp(mint);
       have = (await this.balance())[mint] ?? 0;
@@ -192,7 +215,7 @@ export class EcashFloat {
       const { keep, send } = await wallet.send(amountSats, b.proofs);
       const token = getEncodedToken({ mint, unit: 'sat', proofs: send });
 
-      b.proofs = keep as Proof[];
+      b.proofs = normalizeProofs(keep) as Proof[];
       state.spends ??= [];
       state.spends.push({
         at: Date.now(),
@@ -205,7 +228,7 @@ export class EcashFloat {
       if (state.spends.length > 500) state.spends = state.spends.slice(-500);
       b.pending.push({
         token,
-        proofs: send as Proof[],
+        proofs: normalizeProofs(send) as Proof[],
         eventId: ctx.eventId,
         relayUrl: ctx.relayUrl,
         at: Date.now(),
@@ -216,13 +239,13 @@ export class EcashFloat {
 
   /** 지출 이력(최근 것부터 오래된 순). UI 표시용. */
   async spendHistory(): Promise<SpendRecord[]> {
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     return state.spends ?? [];
   }
 
   /** 충전 이력. */
   async topUpHistory(): Promise<{ at: number; sats: number }[]> {
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     return state.topUps;
   }
 
@@ -244,7 +267,7 @@ export class EcashFloat {
    */
   async reconcile(olderThanMs = 60_000): Promise<{ recovered: number; spent: number }> {
     const cutoff = Date.now() - olderThanMs;
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     let recovered = 0;
     let spent = 0;
 
@@ -267,7 +290,7 @@ export class EcashFloat {
         await this.mutate(async (s) => {
           const bb = bucket(s, mint);
           bb.pending = bb.pending.filter((x) => x.token !== p.token);
-          if (unspent) bb.proofs.push(...p.proofs);
+          if (unspent) bb.proofs.push(...normalizeProofs(p.proofs));
         });
         if (unspent) recovered += sats(p.proofs);
         else spent += sats(p.proofs);
@@ -292,7 +315,7 @@ export class EcashFloat {
     address: string,
   ): Promise<{ mint: string; sentSats: number; feeSats: number }[]> {
     const params = await resolveLightningAddress(address);
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     const out: { mint: string; sentSats: number; feeSats: number }[] = [];
 
     for (const [mint, b] of Object.entries(state.mints)) {
@@ -319,7 +342,7 @@ export class EcashFloat {
       const change = (res as { change?: Proof[] }).change ?? [];
       await this.mutate(async (s) => {
         const bb = bucket(s, mint);
-        bb.proofs = [...(keep as Proof[]), ...change];
+        bb.proofs = normalizeProofs([...(keep as Proof[]), ...change]) as Proof[];
       });
 
       out.push({
@@ -341,7 +364,7 @@ export class EcashFloat {
     if (!this.opts.funding.makeInvoice) {
       throw new Error('환불하려면 funding.makeInvoice 가 필요하다');
     }
-    const state = (await this.opts.store.load()) ?? emptyState();
+    const state = await this.loadState();
     const out: { mint: string; sats: number }[] = [];
 
     for (const [mint, b] of Object.entries(state.mints)) {
@@ -362,7 +385,7 @@ export class EcashFloat {
       await wallet.meltProofsBolt11(quote, send);
 
       await this.mutate(async (s) => {
-        bucket(s, mint).proofs = keep as Proof[];
+        bucket(s, mint).proofs = normalizeProofs(keep) as Proof[];
       });
       out.push({ mint, sats: Number(quote.amount) });
     }

@@ -42,8 +42,17 @@ export interface CashuCollectorOptions {
 const SAT_TO_MSAT = 1000;
 
 function sumSats(proofs: readonly { amount: unknown }[]): number {
-  // cashu-ts v4 의 Proof.amount 는 Amount(bigint 래퍼)라 그냥 더하면 문자열이 된다.
-  return proofs.reduce((s, p) => s + Number(p.amount), 0);
+  // cashu-ts v4 의 Proof.amount 는 숫자가 아니라 Amount(bigint 래퍼)다. 그리고
+  // 전송·저장 경로에 따라 모양이 갈린다: JSON 은 "1" 문자열, structuredClone 은
+  // {value:1n} 객체. 후자를 Number() 하면 NaN 이라 금액이 조용히 틀어진다.
+  return proofs.reduce((s, p) => {
+    const a = p.amount as unknown;
+    if (typeof a === 'number') return s + a;
+    if (typeof a === 'bigint') return s + Number(a);
+    if (typeof a === 'string') return s + Number(a);
+    if (a && typeof a === 'object' && 'value' in a) return s + Number((a as { value: unknown }).value);
+    return Number.NaN;
+  }, 0);
 }
 
 export class CashuCollector implements Collector {

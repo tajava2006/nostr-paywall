@@ -248,3 +248,43 @@ describe('라이트닝 주소 (LUD-16) — 환불 금액을 우리가 정할 수
     expect(found).toBeNull();
   });
 });
+
+describe('proof 금액 정규화 — 저장소마다 모양이 달라진다', () => {
+  it('Amount 객체·문자열·숫자·bigint 를 전부 읽는다', async () => {
+    const { amountOf } = await import('../src/amount.js');
+    expect(amountOf({ amount: 5 })).toBe(5);
+    expect(amountOf({ amount: '5' })).toBe(5);
+    expect(amountOf({ amount: 5n })).toBe(5);
+    // structuredClone(IndexedDB) 이 남기는 프로토타입 잃은 Amount 잔해
+    expect(amountOf({ amount: { value: 5n } })).toBe(5);
+  });
+
+  it('IndexedDB 에 남은 {value:1n} 모양도 잔액이 NaN 이 되지 않는다', async () => {
+    // 실제로 겪은 버그: 파일(JSON)은 "1" 문자열로 정규화돼 우연히 동작했고,
+    // structuredClone 은 객체를 유지해 Number() 가 NaN 이 됐다.
+    const idbShape = { id: 'k', amount: { value: 3n }, secret: 's', C: '02' };
+    const { float: f } = float({
+      version: 1,
+      mints: { [MINT]: { proofs: [idbShape] as never, pending: [] } },
+      topUps: [],
+    });
+    expect(await f.balance()).toEqual({ [MINT]: 3 });
+  });
+
+  it('저장 시 amount 를 숫자로 못박는다', async () => {
+    const { normalizeProofs } = await import('../src/amount.js');
+    const out = normalizeProofs([{ id: 'k', amount: { value: 7n }, secret: 's' }]);
+    expect(out[0]!.amount).toBe(7);
+    expect(typeof out[0]!.amount).toBe('number');
+  });
+
+  it('잔액을 못 읽으면 조용히 넘어가지 않고 던진다', async () => {
+    // NaN 이면 `NaN < 1` 이 false 라 충전을 건너뛰고 declined 로 끝난다 — 원인을 못 찾는다.
+    const { float: f } = float({
+      version: 1,
+      mints: { [MINT]: { proofs: [{ id: 'k', amount: {}, secret: 's' }] as never, pending: [] } },
+      topUps: [],
+    });
+    await expect(f.spend(MINT, 1, { eventId: 'e', relayUrl: 'wss://r' })).rejects.toThrow(/NaN/);
+  });
+});
