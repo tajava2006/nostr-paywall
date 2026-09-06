@@ -1,11 +1,11 @@
-// 최소 NWC(NIP-47) 클라이언트.
+// A minimal NWC (NIP-47) client.
 //
-// **앱이 갖는 게 맞다.** 라이브러리에 연결 문자열을 넘기면 앱 전체 예산을 통째로
-// 상속시키는 꼴이고, 라이브러리가 NWC 클라를 재구현하게 된다. 앱은 이걸로
-// `payInvoice`/`makeInvoice` 두 함수만 만들어 라이브러리에 물려준다.
+// **This belongs to the app.** Handing the connection string to a library would give it the
+// app's entire budget and force it to reimplement this. The app uses it to build just
+// `payInvoice` and `makeInvoice`, and passes those two functions down.
 //
-// nostr-tools 의 `nip47` 은 `parseConnectionString` 과 요청 이벤트 조립만 제공하고
-// **응답 대기·상관관계는 없다** — 그 루프가 여기 있다.
+// nostr-tools' `nip47` only offers `parseConnectionString` and request assembly — there is
+// **no response waiting or correlation**. That loop is what lives here.
 
 import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import { Relay } from 'nostr-tools/relay';
@@ -25,7 +25,7 @@ export function parseNwcUri(uri: string): NwcConnection {
   const relays = url.searchParams.getAll('relay');
   const secret = url.searchParams.get('secret');
   if (!walletPubkey || relays.length === 0 || !secret) {
-    throw new Error('NWC 연결 문자열에 pubkey/relay/secret 이 모두 있어야 한다');
+    throw new Error('an NWC connection string needs pubkey, relay and secret');
   }
   return { walletPubkey, relays, secret: hexToBytes(secret) };
 }
@@ -44,7 +44,7 @@ function decrypt(conn: NwcConnection, scheme: Encryption, ciphertext: string): s
 
 export class NwcClient {
   private readonly conn: NwcConnection;
-  /** 지갑이 광고한 암호화 방식. info 이벤트가 없으면 NIP-04 로 가정한다(NIP-47 하위호환 규정). */
+  /** The encryption the wallet advertises. No info event means NIP-04, per NIP-47. */
   private scheme: Encryption | undefined;
 
   constructor(uri: string) {
@@ -55,7 +55,7 @@ export class NwcClient {
     return Relay.connect(this.conn.relays[0]!);
   }
 
-  /** kind 13194 info 이벤트에서 지원 암호화를 읽는다. */
+  /** Read supported encryption from the kind 13194 info event. */
   private async negotiate(relay: Relay): Promise<Encryption> {
     if (this.scheme) return this.scheme;
     const info = await new Promise<{ tags: string[][] } | null>((resolve) => {
@@ -77,12 +77,12 @@ export class NwcClient {
       });
     });
     const advertised = info?.tags.find((t) => t[0] === 'encryption')?.[1] ?? '';
-    // info 가 없거나 encryption 태그가 없으면 NIP-04 (NIP-47 명시)
+    // No info event, or no encryption tag, means NIP-04 (stated in NIP-47)
     this.scheme = advertised.includes('nip44_v2') ? 'nip44_v2' : 'nip04';
     return this.scheme;
   }
 
-  /** 요청을 보내고 대응하는 23195 응답을 기다린다. */
+  /** Send a request and wait for the matching 23195 response. */
   async request<T>(method: string, params: Record<string, unknown>): Promise<T> {
     const relay = await this.relay();
     try {
@@ -105,7 +105,7 @@ export class NwcClient {
       const answer = new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => {
           sub.close();
-          reject(new Error(`${method} 응답 시간 초과 — 지갑이 이 릴레이에 붙어 있는지 확인할 것`));
+          reject(new Error(`${method} timed out — check the wallet is connected to this relay`));
         }, 60_000);
         const sub = relay.subscribe(
           [{ kinds: [23195], authors: [this.conn.walletPubkey], '#p': [me], '#e': [req.id] }],

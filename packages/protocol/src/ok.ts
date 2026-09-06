@@ -1,25 +1,26 @@
-// OK 응답의 조립(릴레이)과 해석(클라).
+// Building OK responses (relay) and reading them (client).
 //
-// 양쪽을 한 파일에 두는 이유: 접두사 문자열이 두 벌이 되면 조용히 갈린다.
-// 릴레이가 "payment-required:"를 보내는데 클라가 "payment_required:"를 찾는 식으로.
+// Both live in one file so the prefix strings cannot diverge — otherwise the relay sends
+// "payment-required:" while the client looks for "payment_required:" and nobody notices.
 
-// ─── 접두사 ──────────────────────────────────────────────────────
+// ─── prefixes ───────────────────────────────────────────────────
 //
-// NIP-01의 표준 접두사 8종(duplicate/pow/blocked/rate-limited/invalid/restricted/mute/error)에
-// payment 관련이 없다. 우리 클라가 소비자라 새 접두사를 쓰되, **사람이 읽을 문장을 반드시**
-// 붙인다 — 일반 클라는 이 문자열을 에러 토스트에 그대로 띄우므로 수동 결제 폴백이 공짜로 생긴다.
+// NIP-01's eight standard prefixes (duplicate/pow/blocked/rate-limited/invalid/restricted/
+// mute/error) have nothing for payment. Our own client is the consumer, so we add one — but
+// **always include a human sentence**: ordinary clients surface this string in a toast,
+// which gives manual payment as a fallback for free.
 
 export const PREFIX_PAYMENT_REQUIRED = 'payment-required';
 export const PREFIX_PAYMENT_INVALID = 'payment-invalid';
 export const PREFIX_DUPLICATE = 'duplicate';
 export const PREFIX_ERROR = 'error';
-/** NIP-01 표준 접두사. 재시도해도 되는 거절에 쓴다. */
+/** A NIP-01 standard prefix, for rejections where retrying is the right move. */
 export const PREFIX_RATE_LIMITED = 'rate-limited';
 
-/** 저장 실패로 수납한 돈을 돌려줄 때 쓰는 키. OK 메시지가 유일한 반환 채널이다. */
+/** Key for returning collected money after a storage failure; the OK is the only channel. */
 export const REFUND_KEY = 'refund=';
 
-// ─── 릴레이: 조립 ────────────────────────────────────────────────
+// ─── relay side: building ───────────────────────────────────────
 
 export function okPaymentRequired(humanReason: string): string {
   return `${PREFIX_PAYMENT_REQUIRED}: ${humanReason}`;
@@ -34,39 +35,39 @@ export function okDuplicate(): string {
 }
 
 /**
- * 같은 이벤트의 결제가 이미 처리 중일 때.
+ * The same event is already being paid for.
  *
- * `payment-invalid` 를 쓰면 안 된다 — 그건 "이 봉투로 재시도하지 마라"는 뜻인데
- * 여기선 봉투에 아무 문제가 없다. 잠시 후 재시도가 맞으므로 `rate-limited` 다.
+ * Not `payment-invalid`: that means "do not retry with this envelope", but the envelope is
+ * fine and retrying shortly is correct. Hence `rate-limited`.
  */
 export function okInProgress(): string {
   return `${PREFIX_RATE_LIMITED}: payment for this event is already in progress`;
 }
 
 /**
- * 수납 후 저장에 실패했을 때. 토큰을 반드시 실어 보낸다.
+ * Collected, then storage failed. The token must travel with the message.
  *
- * 이 경로가 존재하는 이유는 PLAN §3.4의 순서 때문이다 — 결제 외 모든 거부 사유를
- * 먼저 검사하므로, 수납 뒤에 남는 실패는 인프라 장애뿐이고 그건 여기서 덮는다.
+ * This path exists because of the ordering in PLAN §3.4: every non-payment rejection is
+ * checked first, so the only failure left after collection is infrastructure.
  */
 export function okRefund(token: string, humanReason = 'storage failed'): string {
   return `${PREFIX_ERROR}: ${humanReason}; ${REFUND_KEY}${token}`;
 }
 
-// ─── 클라: 해석 ──────────────────────────────────────────────────
+// ─── client side: parsing ───────────────────────────────────────
 
 export type OkOutcome =
-  /** 저장됨. */
+  /** Stored. */
   | { kind: 'accepted' }
-  /** 이미 있음 — 무과금 통과. 재시도의 정상 종착지다. */
+  /** Already present, free. The normal resting place for a retry. */
   | { kind: 'duplicate' }
-  /** 결제 필요. terms를 아직 모르면 NIP-11을 lazy fetch 할 신호(PLAN D8). */
+  /** Payment required. If terms are unknown, this is the cue to fetch NIP-11 (PLAN D8). */
   | { kind: 'payment-required'; message: string }
-  /** 봉투가 거부됨(이중사용·민트 불허·형식). 같은 봉투로 재시도하면 안 된다. */
+  /** Envelope rejected (double spend, disallowed mint, bad shape). Do not retry it. */
   | { kind: 'payment-invalid'; message: string }
-  /** 수납됐지만 저장 실패. `token`을 반드시 회수할 것. */
+  /** Collected but not stored. Recover `token`. */
   | { kind: 'refunded'; token: string; message: string }
-  /** 그 밖의 거부. */
+  /** Anything else. */
   | { kind: 'rejected'; prefix: string; message: string };
 
 function splitPrefix(reason: string): { prefix: string; rest: string } {
@@ -76,11 +77,11 @@ function splitPrefix(reason: string): { prefix: string; rest: string } {
 }
 
 /**
- * 환불 토큰을 뽑는다. `refund=<token>` — 토큰은 공백 없는 문자열이다.
+ * Extract the refund token. `refund=<token>`, whitespace-free.
  *
- * 문자열이 아닌 입력에도 안 터진다. 호출자가 넘기는 값이 늘 문자열이란 보장이 없다 —
- * 예컨대 nostr-tools 의 `connect()` 는 Error 가 아니라 **평범한 문자열**로 reject 해서
- * `(e as Error).message` 가 `undefined` 가 된다(실측). 여기서 던지면 진짜 원인이 가려진다.
+ * Tolerates non-string input, because callers cannot guarantee otherwise: nostr-tools'
+ * `connect()` rejects with a **plain string** rather than an Error, so `(e as Error).message`
+ * comes through as `undefined` (measured). Throwing here would bury the real cause.
  */
 export function extractRefundToken(reason: unknown): string | null {
   if (typeof reason !== 'string') return null;
@@ -91,25 +92,25 @@ export function extractRefundToken(reason: unknown): string | null {
 }
 
 /**
- * `["OK", <id>, <accepted>, <reason>]`의 뒤쪽 두 값을 해석한다.
+ * Interpret the last two values of `["OK", <id>, <accepted>, <reason>]`.
  *
- * nostr-tools의 `publish()`는 성공 시 reason 문자열로 resolve 하고 실패 시
- * `new Error(reason)`으로 reject 하므로(abstract-relay.ts), 래퍼는 양쪽에서
- * 이 함수를 그대로 부르면 된다.
+ * nostr-tools' `publish()` resolves with the reason string and rejects with
+ * `new Error(reason)`, so a wrapper can call this on both paths.
  */
 export function parseOkReason(accepted: boolean, reason: unknown): OkOutcome {
   const text = typeof reason === 'string' ? reason : '';
   const { prefix, rest } = splitPrefix(text);
 
   if (accepted) {
-    // 수락 시에도 접두사가 붙을 수 있다 (NIP-01의 `duplicate:` 예시).
+    // Acceptance can carry a prefix too (NIP-01 shows `duplicate:`).
     return prefix === PREFIX_DUPLICATE ? { kind: 'duplicate' } : { kind: 'accepted' };
   }
 
-  // 환불은 접두사보다 우선한다 — 돈이 딸려 오는 응답을 일반 오류로 흘리면 그대로 잃는다.
+  // A refund outranks the prefix: treat a response carrying money as a generic error and
+  // the money is simply lost.
   const token = extractRefundToken(text);
   if (token !== null) {
-    // `message` 는 사람에게 보여줄 문장이다. 기계용 토큰 절은 잘라낸다.
+    // `message` is for humans; strip the machine-readable token clause.
     const cut = rest.indexOf(REFUND_KEY);
     const message = (cut < 0 ? rest : rest.slice(0, cut)).replace(/[\s;]+$/, '');
     return { kind: 'refunded', token, message };

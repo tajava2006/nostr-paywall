@@ -1,8 +1,8 @@
-// 클라이언트 ecash float.
+// The client-side ecash float.
 //
-// **레일 무관성의 유일한 경로**다(PLAN D10). NWC 코어에 keysend 가 없어서,
-// 릴레이가 무엇을 받든 앱은 `payInvoice`/`makeInvoice` 두 개만 제공하면 된다:
-// 그 인보이스로 민트에서 ecash 를 사고(NUT-04), 이벤트당 1 sat 씩 쓴다.
+// This is the **only route to rail independence** (PLAN D10). NWC has no keysend in its core
+// method set, so whatever a relay accepts, the app only ever supplies `payInvoice` and
+// `makeInvoice`: we buy ecash with that invoice (NUT-04) and spend a sat per event.
 
 import type { Proof } from '@cashu/cashu-ts';
 import type { PaymentEnvelope } from '@nostr-paywall/protocol';
@@ -19,8 +19,8 @@ import {
   type SpendRecord,
 } from './store.js';
 
-// cashu-ts 는 ESM 전용이라 CJS 소비자를 위해 런타임 값만 지연 로딩한다
-// (collectors 와 같은 이유). 타입은 `import type` 이라 사라진다.
+// cashu-ts is ESM-only, so for CJS consumers only the runtime values are deferred (same
+// reasoning as collectors). Types are `import type` and disappear at compile time.
 type CashuModule = typeof import('@cashu/cashu-ts');
 let cashuPromise: Promise<CashuModule> | undefined;
 function cashu(): Promise<CashuModule> {
@@ -29,16 +29,16 @@ function cashu(): Promise<CashuModule> {
 }
 
 export interface Funding {
-  /** 충전 — 민트가 준 bolt11 을 결제한다. 보통 NWC `pay_invoice`. */
+  /** Top up: pay the mint's bolt11. Usually NWC `pay_invoice`. */
   payInvoice(bolt11: string): Promise<{ preimage: string }>;
-  /** 환불 — 남은 ecash 를 여기로 녹여 보낸다. 보통 NWC `make_invoice`. */
+  /** Sweep: melt the remaining ecash to here. Usually NWC `make_invoice`. */
   makeInvoice?(amountSats: number): Promise<string>;
 }
 
 export interface FloatLimits {
-  /** float 이 들고 있을 상한. 작게 유지하는 게 저장소 축출·XSS 에 대한 진짜 방어다. */
+  /** Cap on what the float holds. Keeping it small is the real defence against eviction and XSS. */
   maxFloatSats: number;
-  /** 기간(기본 24h)당 충전 상한. 라이브러리 자체 회계 — 암호학적 보증이 아니다. */
+  /** Top-up cap per period (24h by default). Library bookkeeping, not a cryptographic guarantee. */
   maxTopUpPerPeriodSats: number;
   periodMs?: number;
 }
@@ -46,16 +46,16 @@ export interface FloatLimits {
 export interface EcashFloatOptions {
   store: FloatStore;
   funding: Funding;
-  /** 릴레이가 광고한 민트 중 우리가 쓸 것. 보통 릴레이 terms 에서 고른다. */
+  /** Spending limits; see `FloatLimits`. */
   limits?: Partial<FloatLimits>;
   /**
-   * **기본 false.** 라이브러리 init 만으로 유저 돈이 나가면 안 된다(PLAN §6.6b).
-   * 켜지 않으면 잔액이 모자랄 때 `onTopUpRequired` 를 부르고, 그것도 없으면 포기한다.
+   * **Defaults to false.** Constructing a library must never spend a user's money (PLAN §6.6b).
+   * Left off, a shortfall calls `onTopUpRequired`; without that either, it gives up.
    */
   autoTopUp?: boolean;
-  /** 충전 동의를 앱에 묻는다. `false` 를 돌려주면 충전하지 않는다. */
+  /** Ask the app for consent. Returning `false` means no top-up. */
   onTopUpRequired?: (info: { mint: string; sats: number }) => Promise<boolean>;
-  /** 한 번에 충전할 금액. 이벤트당 1 sat 이므로 500 이면 500건. */
+  /** How much to buy at once. At 1 sat per event, 500 buys 500 publishes. */
   topUpSats?: number;
   lock?: FloatLock;
 }
@@ -71,13 +71,13 @@ function bucket(state: FloatState, mint: string): MintBucket {
   return state.mints[mint]!;
 }
 
-// 저장소에 따라 amount 모양이 달라지므로 정규화 헬퍼를 쓴다(amount.ts 참조).
+// Amount shape varies by store, so go through the normalising helper (see amount.ts).
 const sats = sumSats;
 
 export class InsufficientFloatError extends Error {
   readonly name = 'InsufficientFloatError';
   constructor(readonly mint: string, readonly needSats: number, readonly haveSats: number) {
-    super(`${mint} 잔액 부족: ${haveSats} sat 보유, ${needSats} sat 필요`);
+    super(`${mint} has ${haveSats} sat but ${needSats} sat is needed`);
   }
 }
 
@@ -91,10 +91,10 @@ export class EcashFloat {
   }
 
   /**
-   * 상태를 읽으면서 proof 금액을 정규화한다.
+   * Load state, normalising proof amounts on the way in.
    *
-   * 이미 저장된 것도 살려야 한다 — 브라우저에 `{value: 1n}` 모양으로 남은 ecash 가
-   * 있을 수 있고, 그걸 못 읽으면 그대로 잃는 것이다.
+   * Already-stored ecash has to survive too: a browser may hold proofs shaped `{value: 1n}`,
+   * and failing to read them is simply losing the money.
    */
   private async loadState(): Promise<FloatState> {
     const state = (await this.opts.store.load()) ?? emptyState();
@@ -106,8 +106,8 @@ export class EcashFloat {
   }
 
   private async mutate<T>(fn: (state: FloatState) => Promise<T>): Promise<T> {
-    // 읽기·수정·쓰기 전체가 하나의 임계구역이어야 한다. 아니면 탭 두 개가
-    // 서로의 저장분을 덮어써서 ecash 를 잃는다.
+    // Read, modify and write must be one critical section, or two tabs overwrite each
+    // other's saved state and the ecash is gone.
     return this.lock.run(async () => {
       const state = await this.loadState();
       const out = await fn(state);
@@ -116,7 +116,7 @@ export class EcashFloat {
     });
   }
 
-  /** 민트별 잔액(sat). */
+  /** Balance per mint, in sats. */
   async balance(): Promise<Record<string, number>> {
     const state = await this.loadState();
     return Object.fromEntries(
@@ -124,7 +124,7 @@ export class EcashFloat {
     );
   }
 
-  // ─── 충전 ──────────────────────────────────────────────────────
+  // ─── top up ─────────────────────────────────────────────────────
 
   private periodTopUpSats(state: FloatState, now: number): number {
     const since = now - (this.limits.periodMs ?? DEFAULT_LIMITS.periodMs!);
@@ -132,9 +132,9 @@ export class EcashFloat {
   }
 
   /**
-   * 민트에서 ecash 를 산다. NUT-04 견적(bolt11) → `funding.payInvoice` → mint.
+   * Buy ecash from a mint: NUT-04 quote (bolt11) → `funding.payInvoice` → mint.
    *
-   * 한도를 넘거나 동의를 못 받으면 `false`.
+   * Returns `false` if a limit is hit or consent is withheld.
    */
   async topUp(mint: string, requestSats?: number): Promise<boolean> {
     const amount = requestSats ?? this.opts.topUpSats ?? this.limits.maxFloatSats;
@@ -151,7 +151,7 @@ export class EcashFloat {
     if (this.opts.onTopUpRequired) {
       if (!(await this.opts.onTopUpRequired({ mint, sats: amount }))) return false;
     } else if (!this.opts.autoTopUp) {
-      // 명시적 동의 경로가 없고 자동도 아니면 돈을 쓰지 않는다.
+      // No explicit consent path and not automatic: spend nothing.
       return false;
     }
 
@@ -161,14 +161,14 @@ export class EcashFloat {
     const quote = await wallet.createMintQuoteBolt11(amount);
     await this.opts.funding.payInvoice(quote.request);
 
-    // 결제가 민트에 반영될 때까지 잠깐 기다린다.
+    // Wait briefly for the mint to see the payment.
     let paid = quote;
     for (let i = 0; i < 30 && paid.state !== 'PAID'; i++) {
       await new Promise((r) => setTimeout(r, 500));
       paid = await wallet.checkMintQuoteBolt11(quote.quote);
     }
     if (paid.state !== 'PAID') {
-      throw new Error(`민트가 결제를 확인하지 못했다 (quote=${quote.quote}, state=${paid.state})`);
+      throw new Error(`the mint never confirmed payment (quote=${quote.quote}, state=${paid.state})`);
     }
 
     const proofs = await wallet.mintProofsBolt11(amount, quote.quote);
@@ -179,13 +179,14 @@ export class EcashFloat {
     return true;
   }
 
-  // ─── 지출 ──────────────────────────────────────────────────────
+  // ─── spend ──────────────────────────────────────────────────────
 
   /**
-   * `amountSats` 만큼의 봉투를 만든다.
+   * Build an envelope worth `amountSats`.
    *
-   * 잔액이 모자라면 한 번 충전을 시도하고, 그래도 모자라면 `InsufficientFloatError`.
-   * 만들어진 토큰은 **pending 으로 기록**된다 — 릴레이 응답을 못 받아도 버리지 않는다.
+   * A shortfall triggers one top-up attempt; still short and it throws
+   * `InsufficientFloatError`. The resulting token is recorded as **pending** — never
+   * discarded just because the relay did not answer.
    */
   async spend(
     mint: string,
@@ -193,11 +194,11 @@ export class EcashFloat {
     ctx: { eventId: string; relayUrl: string },
   ): Promise<PaymentEnvelope> {
     let have = (await this.balance())[mint] ?? 0;
-    // NaN 이면 `NaN < x` 가 false 라 충전을 건너뛰고 조용히 실패한다.
-    // 잔액을 못 읽는 건 0 보다 나쁜 상태이므로 명확히 끊는다.
+    // NaN makes `NaN < x` false, which skips the top-up and fails silently. An unreadable
+    // balance is worse than an empty one, so stop loudly.
     if (!Number.isFinite(have)) {
       throw new Error(
-        `${mint} 잔액을 읽을 수 없다(NaN). 저장된 proof 의 amount 형식이 깨졌을 수 있다.`,
+        `cannot read the balance for ${mint} (NaN). Stored proof amounts may be malformed.`,
       );
     }
     if (have < amountSats) {
@@ -212,7 +213,7 @@ export class EcashFloat {
 
     return this.mutate(async (state) => {
       const b = bucket(state, mint);
-      // 정확히 amountSats 를 만들기 위해 민트에서 쪼갠다. `send` 가 거스름을 돌려준다.
+      // Split at the mint to hit exactly `amountSats`; `send` hands back the change.
       const { keep, send } = await wallet.send(amountSats, b.proofs);
       const token = getEncodedToken({ mint, unit: 'sat', proofs: send });
 
@@ -225,7 +226,7 @@ export class EcashFloat {
         eventId: ctx.eventId,
         relayUrl: ctx.relayUrl,
       });
-      // 무한히 쌓이지 않게 최근 것만 남긴다. 회계가 아니라 표시용이다.
+      // Keep only recent entries. This is for display, not accounting.
       if (state.spends.length > 500) state.spends = state.spends.slice(-500);
       b.pending.push({
         token,
@@ -238,25 +239,25 @@ export class EcashFloat {
     });
   }
 
-  /** 지출 이력(최근 것부터 오래된 순). UI 표시용. */
+  /** Spend history, for display. */
   async spendHistory(): Promise<SpendRecord[]> {
     const state = await this.loadState();
     return state.spends ?? [];
   }
 
-  /** 환불 이력. */
+  /** Refund history. */
   async refundHistory(): Promise<RefundRecord[]> {
     const state = await this.loadState();
     return state.refunds ?? [];
   }
 
-  /** 충전 이력. */
+  /** Top-up history. */
   async topUpHistory(): Promise<{ at: number; sats: number }[]> {
     const state = await this.loadState();
     return state.topUps;
   }
 
-  /** 릴레이가 확실히 받았다. pending 에서 제거한다. */
+  /** The relay definitely took it; drop the pending entry. */
   async settle(eventId: string): Promise<void> {
     await this.mutate(async (state) => {
       for (const b of Object.values(state.mints)) {
@@ -266,11 +267,11 @@ export class EcashFloat {
   }
 
   /**
-   * pending 정리 (PLAN §6 pending-proof GC).
+   * Reconcile pending payments (PLAN §6, pending-proof GC).
    *
-   * 릴레이 응답을 못 받은 토큰들을 민트에 물어본다(NUT-07 checkstate).
-   * **미사용이면 되살리고**, 쓰였으면 버린다. 이게 없으면 "썼는지 모름" 상태의
-   * ecash 가 영원히 묶인다.
+   * Tokens we never got an answer for are checked against the mint (NUT-07 checkstate):
+   * **unspent ones come back**, spent ones are dropped. Without this, ecash in the
+   * "did it go through?" state is stuck forever.
    */
   async reconcile(olderThanMs = 60_000): Promise<{ recovered: number; spent: number }> {
     const cutoff = Date.now() - olderThanMs;
@@ -292,7 +293,7 @@ export class EcashFloat {
           const states = await wallet.checkProofsStates(p.proofs);
           unspent = states.every((s) => s.state === 'UNSPENT');
         } catch {
-          continue; // 민트에 못 물어봤으면 판단 보류 — 절대 버리지 않는다
+          continue; // could not ask the mint: hold, never discard
         }
         await this.mutate(async (s) => {
           const bb = bucket(s, mint);
@@ -306,17 +307,15 @@ export class EcashFloat {
     return { recovered, spent };
   }
 
-  // ─── 환불 ──────────────────────────────────────────────────────
+  // ─── sweep back ─────────────────────────────────────────────────
 
   /**
-   * 남은 ecash 를 **라이트닝 주소**로 되돌린다 (LUD-16 → NUT-05 melt).
+   * Sweep remaining ecash to a **lightning address** (LUD-16 → NUT-05 melt).
    *
-   * `makeInvoice` 보다 이쪽이 낫다: melt 는 금액이 박힌 bolt11 을 요구하는데
-   * 얼마짜리를 만들지는 melt 견적을 받아봐야 안다(수수료 예약분 때문). 유저에게
-   * 물어도 유저가 모르는 그 문제를, 라이트닝 주소면 **우리가 금액을 정해 인보이스를
-   * 뽑을 수 있어서** 반복으로 수렴시킬 수 있다.
-   *
-   * pending 은 건드리지 않는다 — 먼저 `reconcile()` 로 정리할 것.
+   * Better than `makeInvoice`: melt needs a fixed-amount invoice, but the right amount is
+   * only known after quoting. A lightning address lets **us** choose the amount and converge.
+ *
+   * Pending entries are left alone — run `reconcile()` first.
    */
   async refundToLightningAddress(
     address: string,
@@ -327,7 +326,7 @@ export class EcashFloat {
 
     for (const [mint, b] of Object.entries(state.mints)) {
       const total = sats(b.proofs);
-      if (total < 2) continue; // 수수료도 안 되는 잔액
+      if (total < 2) continue; // not even enough for the fee
 
       const { Wallet } = await cashu();
       const wallet = new Wallet(mint);
@@ -345,7 +344,7 @@ export class EcashFloat {
       const { keep, send } = await wallet.send(found.neededSats, b.proofs);
       const res = await wallet.meltProofsBolt11(quote, send);
 
-      // NUT-08: 안 쓴 수수료 예약분이 change 로 돌아온다. 버리면 그대로 손해다.
+      // NUT-08: the unused fee reserve comes back as change. Dropping it is a straight loss.
       const change = (res as { change?: Proof[] }).change ?? [];
       await this.mutate(async (s) => {
         const bb = bucket(s, mint);
@@ -369,11 +368,11 @@ export class EcashFloat {
   }
 
   /**
-   * **얼마를 보낼 수 있는지만** 계산한다. 녹이지 않는다.
+   * Work out **how much can be sent** without melting anything.
    *
-   * "깔끔하게 비우려면 얼마짜리 인보이스를 넣어야 하나"에 대한 답이다 —
-   * melt 수수료 예약분 때문에 총액을 그대로 넣으면 실패하고, 유저는 얼마를 빼야
-   * 할지 모른다. 라이트닝 주소가 있으면 우리가 인보이스를 뽑아 견적만 받아볼 수 있다.
+   * Answers "what size invoice clears the balance?" — melt reserves a fee, so sending the
+   * full total fails and the user has no way to know what to subtract. With a lightning
+   * address we can mint invoices and quote against them.
    */
   async estimateRefund(
     address: string,
@@ -408,27 +407,27 @@ export class EcashFloat {
   }
 
   /**
-   * 남은 ecash 를 유저 지갑으로 되돌린다 (NUT-05 melt → `funding.makeInvoice`).
+   * Sweep to an invoice the wallet produces (NUT-05 melt → `funding.makeInvoice`).
    *
-   * 금액을 우리가 못 정하므로 `refundToLightningAddress` 쪽이 낫다.
-   * pending 은 건드리지 않는다 — 먼저 `reconcile()` 로 정리할 것.
+   * We cannot choose the amount here, so `refundToLightningAddress` is preferable.
+   * Pending entries are left alone — run `reconcile()` first.
    */
   async refundAll(): Promise<{ mint: string; sats: number }[]> {
     if (!this.opts.funding.makeInvoice) {
-      throw new Error('환불하려면 funding.makeInvoice 가 필요하다');
+      throw new Error('sweeping requires funding.makeInvoice');
     }
     const state = await this.loadState();
     const out: { mint: string; sats: number }[] = [];
 
     for (const [mint, b] of Object.entries(state.mints)) {
       const total = sats(b.proofs);
-      if (total <= 1) continue; // 수수료도 안 되는 잔액은 건드리지 않는다
+      if (total <= 1) continue; // too small to cover a fee; leave it
 
       const { Wallet } = await cashu();
       const wallet = new Wallet(mint);
       await wallet.loadMint();
 
-      // 라이트닝 수수료만큼 여유를 둔다. 남는 건 다음 환불 때.
+      // Leave room for the lightning fee; the remainder waits for the next sweep.
       const invoice = await this.opts.funding.makeInvoice!(total - 1);
       const quote = await wallet.createMeltQuoteBolt11(invoice);
       const needed = Number(quote.amount) + Number(quote.fee_reserve ?? 0);

@@ -1,4 +1,4 @@
-// 스레드 조립 + 답글 작성 (NIP-10).
+// Thread assembly and reply construction (NIP-10).
 
 import type { Event, EventTemplate } from 'nostr-tools/core';
 
@@ -6,11 +6,11 @@ export interface ThreadNode {
   event: Event;
   children: ThreadNode[];
   reactions: Event[];
-  /** 0 = 루트 노트. 1 = 유료 릴레이에 값을 치르고 들어온 답글. */
+  /** 0 is the root note; 1 is a reply that reached the paid relay. */
   depth: number;
 }
 
-/** `e` 태그에서 root/reply 를 뽑는다. 마커 방식(NIP-10 권장)과 위치 방식(구형) 둘 다. */
+/** Find root/reply among the `e` tags. Handles both markers (preferred) and legacy positions. */
 export function parentOf(event: Event): string | null {
   const eTags = event.tags.filter((t) => t[0] === 'e' && t[1]);
   if (eTags.length === 0) return null;
@@ -20,24 +20,24 @@ export function parentOf(event: Event): string | null {
   const root = eTags.find((t) => t[3] === 'root');
   if (root) return root[1]!;
 
-  // NIP-22 코멘트는 소문자 `e` 가 부모다(대문자 `E` 가 루트).
+  // For a NIP-22 comment the lowercase `e` is the parent (uppercase `E` is the root).
   if (event.kind === 1111) return eTags[0]![1]!;
 
-  // 구형 위치 방식: 1개면 부모, 2개 이상이면 마지막이 부모.
+  // Legacy positional form: one tag is the parent; with more, the last one is.
   return eTags[eTags.length - 1]![1]!;
 }
 
-/** 리액션이 가리키는 대상. NIP-25 는 "다른 e 태그가 있으면 대상은 마지막"이라 규정한다. */
+/** What a reaction points at. NIP-25 says the target is the last `e` tag if there are several. */
 export function reactionTarget(event: Event): string | null {
   const eTags = event.tags.filter((t) => t[0] === 'e' && t[1]);
   return eTags.length ? eTags[eTags.length - 1]![1]! : null;
 }
 
 /**
- * 평평한 이벤트 목록을 트리로 조립한다.
+ * Assemble a flat list of events into a tree.
  *
- * 부모를 못 찾은 답글은 **루트 직속으로 올린다** — 버리면 화면에서 사라져서
- * "돈 냈는데 안 보이는" 상태가 된다.
+ * A reply whose parent is missing is **attached to the root** instead of dropped —
+ * discarding it would mean "paid for, then invisible".
  */
 export function buildThread(root: Event, events: readonly Event[]): ThreadNode {
   const rootNode: ThreadNode = { event: root, children: [], reactions: [], depth: 0 };
@@ -66,10 +66,10 @@ export function buildThread(root: Event, events: readonly Event[]): ThreadNode {
 }
 
 /**
- * 답글 이벤트를 만든다 (NIP-10 마커 방식).
+ * Build a reply (NIP-10, marker form).
  *
- * **`p` 태그를 부모에게서 전부 물려받는다.** 이게 이 데모의 아웃박스 전략을
- * 성립시키는 규정이다 — 덕분에 답글의 답글도 루트 작성자의 inbox 로 간다.
+ * **Inherits every one of the parent's `p` tags.** That rule is what makes this demo's outbox
+ * strategy work: it is why a reply to a reply still lands in the root author's inbox.
  */
 export function buildReply(opts: {
   content: string;
@@ -84,7 +84,7 @@ export function buildReply(opts: {
     tags.push(['e', parent.id, relayHint, 'reply', parent.pubkey]);
   }
 
-  // 부모의 p 태그 전부 + 부모 작성자 (NIP-10)
+  // All of the parent's p tags, plus the parent's author (NIP-10)
   const pubkeys = new Set<string>([
     ...parent.tags.filter((t) => t[0] === 'p' && t[1]).map((t) => t[1]!),
     parent.pubkey,
@@ -94,7 +94,7 @@ export function buildReply(opts: {
   return { kind: 1, created_at: Math.floor(Date.now() / 1000), content, tags };
 }
 
-/** 리액션 (NIP-25). `e` 는 대상, `p` 는 대상 작성자 — 조상은 물려받지 않는다. */
+/** A reaction (NIP-25): `e` is the target, `p` its author. Nothing is inherited. */
 export function buildReaction(target: Event, content = '+'): EventTemplate {
   return {
     kind: 7,

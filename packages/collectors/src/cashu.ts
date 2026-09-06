@@ -1,20 +1,19 @@
-// Cashu collector — v1 의 주 레일.
+// The Cashu collector — the primary rail for v1.
 //
-// 토큰은 **unlocked** 다(PLAN D5). 클라가 우리보다 먼저 회수해가면 swap 이 실패하고
-// 우리는 그냥 이벤트를 저장 안 하면 그만이라, 레이스를 져도 릴레이 손해가 0이다.
+// Tokens are **unlocked** (PLAN D5). If the client claws them back before we do, the swap
+// fails and we simply do not store the event, so losing that race costs the relay nothing.
 
 import type { Proof, Token } from '@cashu/cashu-ts';
 import { isMintAllowed, type PaymentEnvelope } from '@nostr-paywall/protocol';
 import { assertZeroFeeMints } from './mint-policy.js';
 import type { CollectContext, CollectResult, Collector, ValidateResult } from './types.js';
 
-// ─── cashu-ts 지연 로딩 ─────────────────────────────────────────
+// ─── lazy-loading cashu-ts ──────────────────────────────────────
 //
-// cashu-ts 는 ESM 전용(`type: module`)인데 이 패키지를 쓰는 릴레이 대부분은 CJS 다
-// (NestJS 기본). 정적 import 를 두면 CJS 빌드에서 `require()` 로 내려가 죽는다:
-//   SyntaxError: Unexpected token 'export'
-// 동적 import 는 CJS 에서도 ESM 을 읽을 수 있으므로 런타임 값만 지연 로딩한다.
-// 타입은 `import type` 이라 컴파일 때 사라진다.
+// cashu-ts is ESM-only (`type: module`) while most relays using this package are CJS
+// (NestJS default). A static import gets downlevelled to `require()` in the CJS build and
+// dies with `SyntaxError: Unexpected token 'export'`. A dynamic import reads ESM from CJS
+// fine, so only the runtime values are deferred; types are `import type` and vanish.
 type CashuModule = typeof import('@cashu/cashu-ts');
 let cashuPromise: Promise<CashuModule> | undefined;
 function cashu(): Promise<CashuModule> {
@@ -22,7 +21,7 @@ function cashu(): Promise<CashuModule> {
   return cashuPromise;
 }
 
-/** 테스트에서 네트워크를 끊기 위한 최소 계약. `Wallet` 이 구조적으로 만족한다. */
+/** The minimum surface we use, so tests can cut the network. `Wallet` satisfies it. */
 export interface WalletLike {
   loadMint(): Promise<void>;
   decodeToken(token: string): Token;
@@ -30,21 +29,21 @@ export interface WalletLike {
 }
 
 export interface CashuCollectorOptions {
-  /** 상환 가능한 민트만(H1). 전부 `input_fee_ppk==0` 이어야 한다(H1b). */
+  /** Only mints we can redeem at (H1), all of them with `input_fee_ppk == 0` (H1b). */
   allowedMints: readonly string[];
   unit?: string;
-  /** 주입점 — 테스트/대체 구현용. */
+  /** Injection point for tests and alternative implementations. */
   walletFactory?: (mint: string) => WalletLike;
-  /** 부팅 게이트를 건너뛴다. **테스트 전용.** */
+  /** Skip the boot gate. **Tests only.** */
   skipFeeCheck?: boolean;
 }
 
 const SAT_TO_MSAT = 1000;
 
 function sumSats(proofs: readonly { amount: unknown }[]): number {
-  // cashu-ts v4 의 Proof.amount 는 숫자가 아니라 Amount(bigint 래퍼)다. 그리고
-  // 전송·저장 경로에 따라 모양이 갈린다: JSON 은 "1" 문자열, structuredClone 은
-  // {value:1n} 객체. 후자를 Number() 하면 NaN 이라 금액이 조용히 틀어진다.
+  // cashu-ts v4's `Proof.amount` is an `Amount` (a bigint wrapper), not a number, and its
+  // shape depends on how it travelled: JSON gives the string "1", structuredClone keeps
+  // `{value: 1n}`. `Number()` on the latter is NaN, which silently corrupts the total.
   return proofs.reduce((s, p) => {
     const a = p.amount as unknown;
     if (typeof a === 'number') return s + a;
@@ -71,10 +70,10 @@ export class CashuCollector implements Collector {
     this.walletFactory = opts.walletFactory;
   }
 
-  /** 부팅 게이트. ppk≠0 민트가 하나라도 있으면 던져서 릴레이를 못 띄우게 한다. */
+  /** Boot gate: one non-zero-ppk mint and we throw, so the relay never starts. */
   async init(): Promise<void> {
     if (!this.skipFeeCheck) await assertZeroFeeMints(this.allowedMints, this.unit);
-    // 지갑을 미리 데워둔다 — loadMint 가 300ms~1s 라 이벤트 경로에서 빼야 한다.
+    // Warm the wallets: `loadMint` takes 300ms–1s and has no business on the event path.
     await Promise.all(this.allowedMints.map((m) => this.wallet(m)));
   }
 
@@ -89,17 +88,17 @@ export class CashuCollector implements Collector {
         return wallet;
       })();
       this.wallets.set(mint, w);
-      // 실패한 약속을 캐시에 남기면 영구 고장이 된다.
+      // Caching a rejected promise would make the failure permanent.
       w.catch(() => this.wallets.delete(mint));
     }
     return w;
   }
 
   /**
-   * **돈을 건드리지 않는다.** 민트 정책·토큰 모양·금액만 본다.
+   * **Moves nothing.** Mint policy, token shape and amount only.
    *
-   * 반환하는 `refs` 는 입력 proof 의 secret — 릴레이가 이걸로 이중사용을 막고
-   * 멱등 재시도(같은 refs + 같은 event_id)를 식별한다(§3.6).
+   * The returned `refs` are the input proofs' secrets: the relay uses them to block double
+   * spends and to recognise an idempotent retry (same refs, same event id — PLAN §3.6).
    */
   async validate(envelope: PaymentEnvelope, ctx: CollectContext): Promise<ValidateResult> {
     if (envelope.method !== 'cashu') {
@@ -119,8 +118,8 @@ export class CashuCollector implements Collector {
       return { ok: false, reason: `malformed cashu token: ${(e as Error).message}` };
     }
 
-    // 봉투의 `mint` 필드만 믿으면 안 된다 — 토큰 안에 박힌 민트가 진짜다.
-    // allowlist 민트를 자칭하면서 다른 민트의 토큰을 싣는 걸 막는다.
+    // Never trust the envelope's `mint` field alone — the mint baked into the token is the
+    // real one. Otherwise you can claim an allowlisted mint while carrying another's token.
     if (!this.allowedMints.includes(decoded.mint)) {
       return { ok: false, reason: `token issued by a different mint: ${decoded.mint}` };
     }
@@ -144,10 +143,10 @@ export class CashuCollector implements Collector {
   }
 
   /**
-   * 실제 수납. **validate 가 ok 를 준 봉투에만** 부른다.
+   * Actual collection. Call **only** on an envelope `validate` approved.
    *
-   * swap 이 곧 유효성의 구속력 있는 확인이다 — `checkstate` 조회는 TOCTOU 라
-   * 게이트로 못 쓴다(PLAN §3.4).
+   * The swap *is* the binding validity check — a `checkstate` query is TOCTOU and cannot
+   * serve as a gate (PLAN §3.4).
    */
   async collect(envelope: PaymentEnvelope, ctx: CollectContext): Promise<CollectResult> {
     if (envelope.method !== 'cashu') throw new Error(`method mismatch: ${envelope.method}`);
@@ -159,15 +158,16 @@ export class CashuCollector implements Collector {
     const fresh = await wallet.receive(envelope.token);
     const amountMsat = sumSats(fresh) * SAT_TO_MSAT;
     if (amountMsat < ctx.priceMsat) {
-      // ppk==0 게이트가 있으면 여기 오면 안 된다. 오면 게이트가 뚫린 것이다.
+      // With the ppk==0 gate in place this is unreachable. Reaching it means it was bypassed.
       throw new Error(
-        `수납 순액이 가격에 못 미친다 (${amountMsat} < ${ctx.priceMsat} msat). ` +
-          `민트 수수료 게이트(input_fee_ppk==0)가 우회됐는지 확인할 것.`,
+        `collected less than the price (${amountMsat} < ${ctx.priceMsat} msat). ` +
+          `Check whether the mint fee gate (input_fee_ppk == 0) was bypassed.`,
       );
     }
 
-    // 인코딩은 던질 수 있다(예: 레거시 keyset id). 여기서 터지면 **이미 돈을 받은 뒤**라
-    // 환불 경로가 통째로 무력해지므로 삼킨다 — proofs 원물은 어차피 같이 넘긴다.
+    // Encoding can throw (a legacy keyset id, say). Throwing here happens **after** the money
+    // is taken and would disable the refund path entirely, so swallow it — the raw proofs
+    // travel alongside regardless.
     let refundToken: string | null = null;
     try {
       const { getEncodedToken } = await cashu();

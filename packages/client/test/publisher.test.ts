@@ -182,7 +182,7 @@ describe('지불 실패는 일반 오류와 구별된다 (§6.6a)', () => {
     });
     const err = await publishToRelay(deps, URL, charged).catch((e) => e);
     expect(err.reason).toBe('unsupported');
-    expect(err.message).toMatch(/정책 불일치/);
+    expect(err.message).toMatch(/policy mismatch/);
   });
 });
 

@@ -159,7 +159,7 @@ describe('collect — 실제 수납', () => {
     // 수수료를 먹어 0 이 되어 돌아오는 상황(ppk≠0 민트가 allowlist 에 새어든 경우)
     const c = collector({ receive: async () => [] as never });
     await expect(c.collect(envelope({ token: tok(MINT, [1]) }), ctx)).rejects.toThrow(
-      /input_fee_ppk==0/,
+      /input_fee_ppk == 0/,
     );
   });
 });

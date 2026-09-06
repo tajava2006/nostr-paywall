@@ -1,28 +1,28 @@
-// `SimplePool` 드롭인 교체.
+// A drop-in replacement for `SimplePool`.
 //
-// 앱 변경량은 생성자 한 줄 + 결제 콜백 배선이 전부다. `subscribe` 계열은 손대지 않는다
-// (읽기는 무료다). `publish` 만 오버라이드한다.
+// The app changes one constructor plus the payment wiring. Subscriptions are untouched
+// (reading is free); only `publish` is overridden.
 
-// ⚠️ 서브패스(`nostr-tools/pool` 등)가 아니라 **루트에서** 가져온다.
-// CJS 빌드는 moduleResolution 이 낮아 서브패스 exports 맵을 못 읽는다
-// (`Cannot find module 'nostr-tools/pool'`). 루트는 어느 해석기에서도 잡힌다.
+// Import from the **package root**, not subpaths (`nostr-tools/pool` and friends): the CJS
+// build resolves with a lower moduleResolution that cannot read the subpath exports map
+// (`Cannot find module 'nostr-tools/pool'`). The root resolves everywhere.
 import { SimplePool, nip11, utils, type Event, type EventTemplate, type VerifiedEvent } from 'nostr-tools';
 import { publishToRelay, type RelayLike } from './publisher.js';
 import type { Payer, PolicyStore, RelayPolicy } from './types.js';
 
 export interface PaidPoolOptions {
-  /** 결제 능력. 없으면 유료 릴레이 발행이 `PaymentUnavailableError` 로 실패한다. */
+  /** Payment capability. Without it, publishing to a paid relay fails with `PaymentUnavailableError`. */
   payer?: Payer;
-  /** 릴레이 정책 캐시를 앱이 영속화하고 싶을 때. 없으면 메모리. */
+  /** For apps that want to persist the relay policy cache. Memory otherwise. */
   policyStore?: PolicyStore;
-  /** NIP-11 fetch 교체(테스트·커스텀 전송). */
+  /** Override the NIP-11 fetch (tests, custom transports). */
   fetchRelayInformation?: (url: string) => Promise<unknown>;
 }
 
 const UNKNOWN: RelayPolicy = { kind: 'unknown' };
 
 export class PaidPool extends SimplePool {
-  /** 결제 뒤 재연결 대기. 기본 3s 는 LN 결제 직후엔 짧다. */
+  /** Reconnect budget after payment. The 3s default is short right after a lightning payment. */
   connectionTimeoutMs = 10_000;
   private readonly policies = new Map<string, RelayPolicy>();
   private readonly opts: PaidPoolOptions;
@@ -34,11 +34,11 @@ export class PaidPool extends SimplePool {
   }
 
   /**
-   * 학습된 릴레이 정책. UI 에 "이 릴레이는 유료" 를 띄우고 싶을 때 쓴다.
+   * The learned relay policy — use it to show "this relay charges" in a UI.
    *
-   * ⚠️ 키는 **정규화된 URL** 이다. nostr-tools 가 `wss://x.com` 을 `wss://x.com/` 로
-   * 바꾸므로, 정규화 없이 넣고 빼면 캐시가 영원히 빗나가 1-shot 경로가 안 켜진다
-   * (실측으로 잡음 — 매번 왕복 2회를 돌고 있었다).
+   * Keys are **normalised URLs**. nostr-tools rewrites `wss://x.com` to `wss://x.com/`, so
+   * storing and reading without normalising misses forever and the single-round-trip path
+   * never engages (measured: every publish was doing two round trips).
    */
   getPolicy(url: string): RelayPolicy {
     return this.policies.get(utils.normalizeURL(url)) ?? UNKNOWN;
@@ -61,12 +61,12 @@ export class PaidPool extends SimplePool {
   }
 
   /**
-   * 릴레이별 발행. 유료면 결제를 붙인다.
+   * Publish per relay, attaching payment where required.
    *
-   * `SimplePool.publish` 와 시그니처가 같아 드롭인이다 — 릴레이별 promise 배열을
-   * 돌려주고, 유료 릴레이에서 지불 수단이 없으면 그 항목만
-   * `PaymentUnavailableError` 로 reject 된다. **일반 오류와 구별해서 UI 에 알릴 것**
-   * (안 그러면 답글이 상대에게 전달 안 됐는데 성공으로 보인다).
+   * Same signature as `SimplePool.publish`, so it is a drop-in: one promise per relay, and a
+   * paid relay with no payment method rejects that entry with `PaymentUnavailableError`.
+   * **Report it distinctly** — otherwise a reply silently fails to reach its recipient while
+   * the UI claims success.
    */
   publish(relays: string[], event: Event): Promise<string>[] {
     return relays.map(async (url) => {
@@ -74,8 +74,8 @@ export class PaidPool extends SimplePool {
       return publishToRelay(
         {
           payer: this.opts.payer ?? (() => null),
-          // 매번 새로 얻는다. 결제로 시간이 흐르는 동안 연결이 닫힐 수 있다.
-          // 연결 대기를 넉넉히 준다 — 결제 직후 재연결이라 기본값(3s)은 빡빡하다.
+          // Fetched each time: the connection can close while payment is in flight.
+          // Allow a generous reconnect budget, since this happens right after a payment.
           getRelay: async () =>
             (await this.ensureRelay(url, {
               connectionTimeout: this.connectionTimeoutMs,

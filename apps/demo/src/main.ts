@@ -177,7 +177,6 @@ function renderNode(root: Event, node: ThreadNode): string {
         <b>${esc(nameOf(node.event.pubkey))}</b>
         <span class="mono">${short(node.event.pubkey)}</span>
         <span>${when(node.event.created_at * 1000)}</span>
-        <a class="dim small" href="${VIEWER}${node.event.id}" target="_blank" rel="noreferrer">open ↗</a>
         ${reactions}
       </div>
       <div class="note-body">${esc(node.event.content)}</div>
@@ -239,7 +238,9 @@ function renderWallet(): string {
       at: s.at,
       label: 'Publish',
       amount: `−${s.sats}`,
-      note: `<a href="${VIEWER}${s.eventId}" target="_blank" rel="noreferrer">${s.eventId.slice(0, 10)}… ↗</a> <span class="dim">${esc(s.relayUrl)}</span>`,
+      // No outbound link: these events live only on the paid relay, so a general
+      // client has nowhere to look them up. The id alone is the honest record.
+      note: `<span class="mono dim">${s.eventId.slice(0, 12)}…</span> <span class="dim">${esc(s.relayUrl)}</span>`,
     })),
     ...refunds.map((r) => ({
       at: r.at,
@@ -292,15 +293,14 @@ function renderWallet(): string {
       <h3>Sweep back to lightning</h3>
       <div class="row"><input type="text" id="refund-target" placeholder="lightning address (you@domain) or bolt11" /></div>
       <div class="row">
-        <button class="action" id="refund-estimate">How much can I sweep?</button>
         <button class="action primary" id="refund-go" ${total < 2 ? 'disabled' : ''}>Sweep ${total} sat</button>
       </div>
       ${sweepHint ? `<div class="notice info small">${sweepHint}</div>` : ''}
       <div class="notice info small">
-        Melting needs an invoice for a fixed amount, but the routing fee isn't known until the mint
-        quotes it — which is why "how much should I request?" has no good answer with a bare invoice.
-        Give a <b>lightning address</b> and we'll pick the amount and converge on it.
-        A raw node pubkey can't work: melt has no keysend.
+        Give a <b>lightning address</b> and the amount is worked out for you: melting needs an
+        invoice for a fixed amount, but the routing fee is only known once the mint quotes it.
+        A bare invoice is paid as-is, if the balance covers it.
+        A raw node pubkey can't work — melt has no keysend.
       </div>
     </div>
 
@@ -433,28 +433,6 @@ function wire() {
     clear.onclick = () => {
       setNwc(null);
       location.reload();
-    };
-
-  const estimate = app.querySelector<HTMLButtonElement>('#refund-estimate');
-  if (estimate)
-    estimate.onclick = async () => {
-      const target = app.querySelector<HTMLInputElement>('#refund-target')!.value.trim();
-      if (!target.includes('@')) {
-        sweepHint = 'Estimating needs a lightning address — with a bare invoice you pick the amount.';
-        render();
-        return;
-      }
-      await withStatus('Asking the mint…', async () => {
-        const out = await wallet.float.estimateRefund(target);
-        sweepHint = out.length
-          ? out
-              .map(
-                (o) =>
-                  `${o.mint}: holding ${o.totalSats} sat → request an invoice for <b>${o.sendSats} sat</b> (fee reserve ${o.feeSats}).`,
-              )
-              .join('<br>')
-          : 'Not enough to cover the routing fee.';
-      });
     };
 
   const refund = app.querySelector<HTMLButtonElement>('#refund-go');

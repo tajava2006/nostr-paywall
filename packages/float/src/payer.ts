@@ -1,14 +1,15 @@
-// float → `Payer` 어댑터. 앱이 실제로 쓰는 진입점이다.
+// float → `Payer` adapter. This is the entry point an app actually uses.
 
 import type { Payer, PaymentRequest } from '@nostr-paywall/client';
 import type { PaymentEnvelope, PaymentTerms } from '@nostr-paywall/protocol';
 import type { EcashFloat } from './float.js';
 
 /**
- * 릴레이가 광고한 수단 중 우리가 쓸 민트를 고른다.
+ * Choose a mint from what the relay advertised.
  *
- * `allowedMints` 를 주면 그 교집합에서만 고른다 — 앱이 신뢰하는 민트를 제한하는
- * 자리다. 릴레이가 부르는 대로 아무 민트나 쓰면 안 된다(그 민트에 돈을 맡기는 것이므로).
+ * With `allowedMints` the choice is restricted to the intersection — the place an app pins
+ * the mints it trusts. Using whatever a relay names means letting the relay decide where
+ * your money is held.
  */
 export function pickMint(
   terms: PaymentTerms,
@@ -27,23 +28,18 @@ export function pickMint(
 }
 
 export interface FloatPayerOptions {
-  /** 앱이 신뢰하는 민트. 생략하면 릴레이가 광고한 것을 그대로 쓴다. */
+  /** Mints the app trusts. Omitted means accepting whatever the relay advertises. */
   allowedMints?: readonly string[];
-  /** 릴레이별로 낼지 말지. 생략하면 전부 낸다. */
+  /** Decide per relay whether to pay at all. Omitted means always. */
   shouldPay?: (relayUrl: string) => boolean;
   onError?: (e: unknown, req: PaymentRequest) => void;
 }
 
 /**
- * `PaidPool({ payer })` 에 그대로 꽂는다.
+ * Plug straight into `PaidPool({ payer })`.
  *
- * ```ts
- * const float = new EcashFloat({ store, funding });
- * const pool = new PaidPool({ payer: createFloatPayer(float) });
- * ```
- *
- * 실패하면 `null` 을 돌려준다 — 풀이 `PaymentUnavailableError(declined)` 로 바꿔
- * 앱에 알린다. 여기서 던지면 원인 구별이 흐려진다.
+ * Returns `null` on failure so the pool converts it to
+ * `PaymentUnavailableError(declined)`. Throwing here would blur the cause.
  */
 export function createFloatPayer(float: EcashFloat, opts: FloatPayerOptions = {}): Payer {
   return (relayUrl: string) => {
@@ -51,10 +47,10 @@ export function createFloatPayer(float: EcashFloat, opts: FloatPayerOptions = {}
 
     return async (req: PaymentRequest): Promise<PaymentEnvelope | null> => {
       const mint = pickMint(req.terms, opts.allowedMints);
-      if (!mint) return null; // 우리가 쓸 수 있는 민트를 릴레이가 안 받는다
+      if (!mint) return null; // the relay accepts no mint we are willing to use
 
-      // 릴레이 가격은 msat 이지만 Cashu sat 키셋은 정수 sat 만 표현한다.
-      // 모자라게 내면 거부되므로 올림한다.
+      // Relay prices are msat, but a Cashu sat keyset only expresses whole sats.
+      // Underpaying is rejected, so round up.
       const amountSats = Math.ceil(req.amountMsat / 1000);
 
       try {

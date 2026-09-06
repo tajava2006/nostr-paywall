@@ -90,7 +90,7 @@ describe('부팅 게이트', () => {
   });
 
   it('allowlist 가 비면 던진다', async () => {
-    await expect(assertZeroFeeMints([], 'sat', f)).rejects.toThrow(/비어 있다/);
+    await expect(assertZeroFeeMints([], 'sat', f)).rejects.toThrow(/allowlist is empty/);
   });
 
   it('trailing slash 를 정규화한다', async () => {

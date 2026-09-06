@@ -1,11 +1,11 @@
-// 민트 수수료 정책 — **1 sat 가격의 생사가 여기 걸려 있다** (PLAN D13 / §4.1 H1b).
+// Mint fee policy — **whether a 1 sat price is possible at all** (PLAN D13 / §4.1 H1b).
 //
-// NUT-02: fees = ceil(sum(input_fee_ppk) / 1000), 그리고 sum(inputs) - fees == sum(outputs).
-// ppk=100 이면 입력 1~10개당 1 sat 이므로 1 sat proof 는 출력이 0이 되어 **swap 자체가
-// 성립하지 않는다**(실측: `Inputs: 0, Outputs: 0`).
+// NUT-02: `fees = ceil(sum(input_fee_ppk) / 1000)`, and `sum(inputs) - fees == sum(outputs)`.
+// At ppk=100 the fee for 1..10 inputs is 1 sat, so a 1 sat proof yields zero outputs and the
+// **swap cannot be constructed** (measured: `Inputs: 0, Outputs: 0`).
 //
-// 이건 조용히 망가지는 종류의 함정이다 — 설정에 민트 하나 잘못 넣으면 모든 수납이
-// 실패하거나 순액 0원이 되는데, 코드는 아무 데서도 안 터진다. 그래서 부팅 게이트로 만든다.
+// This is the kind of thing that fails silently: one wrong mint in the config and every
+// collection fails or nets zero, with nothing throwing anywhere. So it becomes a boot gate.
 
 export interface KeysetLike {
   id: string;
@@ -14,18 +14,18 @@ export interface KeysetLike {
   input_fee_ppk?: number;
 }
 
-/** NUT-02 수수료 공식. 입력 개수만큼 ppk 를 더하고 1000 으로 올림 나눗셈. */
+/** The NUT-02 fee formula: sum ppk over inputs, then divide by 1000 rounding up. */
 export function feeForInputs(inputCount: number, inputFeePpk: number): number {
   if (inputCount <= 0) return 0;
   return Math.ceil((inputCount * inputFeePpk) / 1000);
 }
 
 /**
- * 해당 unit 의 **활성** 키셋 중 가장 큰 ppk.
+ * The largest ppk among **active** keysets for this unit.
  *
- * 가장 큰 값을 쓰는 이유: 클라가 어느 활성 키셋으로 발행할지 우리가 못 고른다.
- * 하나라도 유료면 그 경로로 온 1 sat 은 죽으므로 최악값으로 판정해야 한다.
- * 해당 unit 의 활성 키셋이 없으면 `null`(= 판정 불가, 거부).
+ * Worst case, because we don't get to choose which active keyset a client mints from: if any
+ * one of them charges, a 1 sat payment arriving that way is dead. No active keyset for the
+ * unit returns `null` (undecidable, therefore rejected).
  */
 export function maxActiveInputFeePpk(keysets: readonly KeysetLike[], unit = 'sat'): number | null {
   const active = keysets.filter((k) => k.active && k.unit === unit);
@@ -36,13 +36,13 @@ export function maxActiveInputFeePpk(keysets: readonly KeysetLike[], unit = 'sat
 export interface MintFeePolicy {
   mint: string;
   ppk: number | null;
-  /** 이 민트로 1 sat 결제가 가능한가. */
+  /** Can a 1 sat payment clear at this mint? */
   zeroFee: boolean;
 }
 
 export type FetchLike = (url: string) => Promise<{ json(): Promise<unknown> }>;
 
-/** 민트의 `/v1/keysets` 를 읽어 수수료 정책을 판정한다. */
+/** Read the mint's `/v1/keysets` and decide its fee policy. */
 export async function fetchMintFeePolicy(
   mint: string,
   unit = 'sat',
@@ -55,24 +55,25 @@ export async function fetchMintFeePolicy(
 }
 
 /**
- * 부팅 게이트. allowlist 의 모든 민트가 ppk==0 인지 확인하고, 아니면 **던진다**.
+ * Boot gate: every allowlisted mint must have ppk == 0, otherwise **throw**.
  *
- * 릴레이를 못 띄우게 하는 게 맞다 — 이 조건이 깨진 채로 뜨면 유저 돈만 받고
- * 수납은 실패하는 상태로 조용히 굴러간다.
+ * Refusing to start is correct. Starting with this broken means taking users' money while
+ * collection quietly fails.
  */
 export async function assertZeroFeeMints(
   mints: readonly string[],
   unit = 'sat',
   fetchImpl?: FetchLike,
 ): Promise<MintFeePolicy[]> {
-  if (mints.length === 0) throw new Error('민트 allowlist 가 비어 있다');
+  if (mints.length === 0) throw new Error('the mint allowlist is empty');
   const policies = await Promise.all(mints.map((m) => fetchMintFeePolicy(m, unit, fetchImpl)));
   const bad = policies.filter((p) => !p.zeroFee);
   if (bad.length > 0) {
-    const detail = bad.map((p) => `${p.mint} (input_fee_ppk=${p.ppk ?? '알 수 없음'})`).join(', ');
+    const detail = bad.map((p) => `${p.mint} (input_fee_ppk=${p.ppk ?? 'unknown'})`).join(', ');
     throw new Error(
-      `1 sat 결제가 불가능한 민트가 allowlist 에 있다: ${detail}. ` +
-        `NUT-02 상 수수료가 원금 이상이라 swap 이 성립하지 않는다 — input_fee_ppk==0 인 민트만 쓸 것.`,
+      `allowlisted mint cannot clear a 1 sat payment: ${detail}. ` +
+        `Under NUT-02 the fee meets or exceeds the amount, so the swap cannot be constructed — ` +
+        `use mints with input_fee_ppk == 0.`,
     );
   }
   return policies;

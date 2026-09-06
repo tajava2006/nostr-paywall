@@ -1,7 +1,7 @@
-// `node:sqlite` 구현 — **네이티브 의존성 0**(Node 22.5+ 내장).
+// A `node:sqlite` implementation — **no native dependencies** (built in since Node 22.5).
 //
-// 릴레이 본체는 Postgres 를 쓰지만, 원장은 그것과 독립이다. 이벤트 저장소가 날아가도
-// 걷은 ecash 는 살아야 하고, 반대도 마찬가지다. 단일 파일이라 백업도 `cp` 한 번이다.
+// The relay itself runs Postgres, but this ledger is independent of it: the event store can
+// be lost without losing the collected ecash, and vice versa. One file, so backup is `cp`.
 
 import { DatabaseSync } from 'node:sqlite';
 import type {
@@ -23,8 +23,8 @@ CREATE TABLE IF NOT EXISTS payment (
   updated_at  INTEGER NOT NULL
 ) STRICT;
 
--- 이중사용 방어의 실체. ref = Cashu proof secret.
--- PRIMARY KEY 가 곧 "이 secret 은 한 이벤트만 살 수 있다"는 제약이다.
+-- Where double-spend protection actually lives. ref = a Cashu proof secret; the primary
+-- key *is* the constraint "this secret buys exactly one event".
 CREATE TABLE IF NOT EXISTS payment_ref (
   ref      TEXT PRIMARY KEY,
   event_id TEXT NOT NULL
@@ -63,7 +63,7 @@ export class SqlitePaymentRepository implements PaymentRepository {
 
   constructor(path = ':memory:') {
     this.db = new DatabaseSync(path);
-    // WAL: 릴레이는 읽기(중복확인)와 쓰기(수납)가 섞인다. 파일 DB 에서만 의미 있다.
+    // WAL: reads (dedupe) and writes (collection) interleave. Only meaningful for a file DB.
     if (path !== ':memory:') this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(SCHEMA);
@@ -78,12 +78,12 @@ export class SqlitePaymentRepository implements PaymentRepository {
     method: string,
     refs: readonly string[],
   ): Promise<ReserveResult> {
-    if (refs.length === 0) throw new Error('refs 가 비어 있다 — 선점할 대상이 없다');
+    if (refs.length === 0) throw new Error('no refs to reserve');
     const now = Date.now();
 
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      // 1) 다른 이벤트가 이 refs 를 이미 썼는가 = 이중사용
+      // 1) Did another event already claim these refs? That is a double spend.
       const placeholders = refs.map(() => '?').join(',');
       const clash = this.db
         .prepare(`SELECT event_id FROM payment_ref WHERE ref IN (${placeholders})`)
@@ -94,7 +94,7 @@ export class SqlitePaymentRepository implements PaymentRepository {
         return { kind: 'conflict', otherEventId: other.event_id };
       }
 
-      // 2) 같은 이벤트의 기존 상태
+      // 2) Existing state for this event
       const existing = this.db
         .prepare('SELECT * FROM payment WHERE event_id = ?')
         .get(eventId) as unknown as Row | undefined;
@@ -108,7 +108,7 @@ export class SqlitePaymentRepository implements PaymentRepository {
           this.db.exec('ROLLBACK');
           return { kind: 'in-progress' };
         }
-        // failed → 재시도 허용. 상태만 되돌린다.
+        // failed → allow a retry; just reset the state.
         this.db
           .prepare("UPDATE payment SET state='pending', reason=NULL, updated_at=? WHERE event_id=?")
           .run(now, eventId);
@@ -121,7 +121,7 @@ export class SqlitePaymentRepository implements PaymentRepository {
           .run(eventId, method, now, now);
       }
 
-      // 3) refs 선점. 이미 우리 것이면 그대로 둔다(재시도 경로).
+      // 3) Claim the refs. Already ours means a retry, so leave them.
       const ins = this.db.prepare(
         'INSERT INTO payment_ref (ref, event_id) VALUES (?, ?) ON CONFLICT(ref) DO NOTHING',
       );
@@ -146,10 +146,10 @@ export class SqlitePaymentRepository implements PaymentRepository {
          WHERE event_id=? AND state='pending'`,
       )
       .run(amountMsat, JSON.stringify(proofs), Date.now(), eventId);
-    // pending 이 아닌데 commit 이 오면 상태 머신이 깨진 것이다. 조용히 넘기면
-    // 자산(proofs)이 기록되지 않은 채 성공으로 보고된다.
+    // A commit against a non-pending row means the state machine is broken. Passing silently
+    // would report success while the assets (proofs) go unrecorded.
     if (n.changes === 0) {
-      throw new Error(`commit 대상이 pending 이 아니다: ${eventId}`);
+      throw new Error(`commit target is not pending: ${eventId}`);
     }
   }
 
@@ -173,7 +173,7 @@ export class SqlitePaymentRepository implements PaymentRepository {
     return rows.map(toRecord);
   }
 
-  /** 걷은 총액(msat). 원장이 자산 원장이라는 걸 드러내는 편의 조회. */
+  /** Total collected, in msat. A convenience that makes the asset-ledger nature obvious. */
   totalCollectedMsat(): number {
     const r = this.db
       .prepare("SELECT COALESCE(SUM(amount_msat), 0) AS total FROM payment WHERE state='collected'")

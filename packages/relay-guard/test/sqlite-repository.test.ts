@@ -130,16 +130,16 @@ describe('자산 보관 — proofs 는 베어러다', () => {
 describe('상태 머신 방어', () => {
   it('pending 이 아닌 걸 commit 하면 던진다 — 조용히 넘기면 자산이 기록 없이 사라진다', async () => {
     const r = make();
-    await expect(r.commit(E1, 1000, PROOFS)).rejects.toThrow(/pending 이 아니다/);
+    await expect(r.commit(E1, 1000, PROOFS)).rejects.toThrow(/not pending/);
 
     await r.reserve(E1, 'cashu', ['s1']);
     await r.commit(E1, 1000, PROOFS);
-    await expect(r.commit(E1, 1000, PROOFS)).rejects.toThrow(/pending 이 아니다/);
+    await expect(r.commit(E1, 1000, PROOFS)).rejects.toThrow(/not pending/);
   });
 
   it('빈 refs 는 던진다 — 선점할 대상이 없는데 성공하면 이중사용이 뚫린다', async () => {
     const r = make();
-    await expect(r.reserve(E1, 'cashu', [])).rejects.toThrow(/refs 가 비어 있다/);
+    await expect(r.reserve(E1, 'cashu', [])).rejects.toThrow(/no refs to reserve/);
   });
 
   it('conflict 는 아무것도 남기지 않는다 (롤백)', async () => {

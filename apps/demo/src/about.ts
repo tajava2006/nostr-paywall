@@ -59,6 +59,20 @@ export const ABOUT_HTML = `
     less and stay correct.
   </p>
 
+  <h3 style="font-size:14px;margin:18px 0 6px">Where a reply-to-a-reply actually ends up</h3>
+  <p>
+    Suppose someone answers a comment here. That reply is published to the read relays of
+    everyone it tags — which, for a real user, may well include a free relay they chose as
+    their own inbox. So it exists, and it is delivered.
+  </p>
+  <p>
+    Three different things then happen. It does <b>not</b> reach the root author, who never
+    listed that relay. It does <b>not</b> appear in this thread, because a client honouring the
+    outbox model reads the root author's inbox and nowhere else. But it <b>does</b> appear in the
+    <b>reply author's own notifications</b> — that person asked to be reachable there.
+    Everyone got exactly what they asked for.
+  </p>
+
   <h3 style="font-size:14px;margin:18px 0 6px">Finding less is a feature</h3>
   <p>
     If a reply doesn't reach you because it was never sent where you said to reach you, that isn't
