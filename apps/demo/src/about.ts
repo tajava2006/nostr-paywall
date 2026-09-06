@@ -57,6 +57,17 @@ export const ABOUT_HTML = `
     what the person concerned asked for.
   </p>
 
+  <h3 style="font-size:14px;margin:20px 0 6px">No account, by the same rule</h3>
+  <p>
+    If payment is the only thing that measures spam, an account system measures nothing — so
+    there is no login here. Replying generates a throwaway key in this browser; clear storage
+    and you are someone else. That is the entire identity layer.
+  </p>
+  <p>
+    Which leaves paying. Connect any NWC wallet and you are done: it buys ecash once, and a sat
+    is spent per event from there. That is the only thing a client has to add.
+  </p>
+
   <p class="dim small" style="margin-top:20px">
     Proof of concept, unaudited. 1 sat is a mechanism, not a deterrent. And paid writes buy spam
     resistance, not infrastructure — a relay's real cost is read bandwidth, which stays free.

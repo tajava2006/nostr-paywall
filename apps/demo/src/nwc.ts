@@ -18,9 +18,14 @@ export interface NwcConnection {
   secret: Uint8Array;
 }
 
-/** `nostr+walletconnect://<walletPubkey>?relay=...&secret=...` */
+/**
+ * `nostr+walletconnect://<walletPubkey>?relay=...&secret=...`
+ *
+ * `nostrwalletconnect://` is accepted too: NIP-47 specifies the `+` form, but wallets in the
+ * wild still emit the older one and a scanned QR is whatever the wallet decided to draw.
+ */
 export function parseNwcUri(uri: string): NwcConnection {
-  const url = new URL(uri.replace(/^nostr\+walletconnect:\/\//, 'https://'));
+  const url = new URL(uri.trim().replace(/^nostr\+?walletconnect:\/\//i, 'https://'));
   const walletPubkey = url.hostname || url.pathname.replace(/\//g, '');
   const relays = url.searchParams.getAll('relay');
   const secret = url.searchParams.get('secret');

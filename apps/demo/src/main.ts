@@ -15,7 +15,7 @@ import {
   setNwc,
   sign,
 } from './identity.js';
-import { NwcClient } from './nwc.js';
+import { NwcClient, parseNwcUri } from './nwc.js';
 import {
   BOOTSTRAP_RELAYS,
   fetchReactionsFor,
@@ -23,6 +23,7 @@ import {
   publishTargetsFor,
   relayListFor,
 } from './outbox.js';
+import { cameraAvailable, scanQr } from './qr.js';
 import { buildReaction, buildReply, buildThread, type ThreadNode } from './thread.js';
 import { createWallet, requestPersistence, setTopUpAsker } from './wallet.js';
 
@@ -259,7 +260,10 @@ function renderWallet(): string {
              <p class="dim small">Your actual lightning wallet, reached over NWC. Separate from the float below.</p>
              <button class="action" id="nwc-clear">Disconnect</button>`
           : `<div class="row"><input type="text" id="nwc-input" placeholder="nostr+walletconnect://…" /></div>
-             <div class="row"><button class="action primary" id="nwc-save">Connect</button></div>
+             <div class="row">
+               <button class="action primary" id="nwc-save">Connect</button>
+               ${cameraAvailable() ? '<button class="action" id="nwc-scan">Scan QR</button>' : ''}
+             </div>
              <div class="notice warn small">
                The connection string is stored in this browser, like every other nostr web client.
                Use a <b>dedicated connection with a budget cap</b> — a library cannot enforce a hard cap for you.
@@ -354,8 +358,8 @@ function render() {
     ${
       tab === 'feed'
         ? `<div class="notice info small">
-             This account lists <b>one inbox relay</b>, and it charges (NIP-65).
-             Replies are read from there and nowhere else — so everything below was paid for.
+             This account lists <b>one inbox relay</b> (NIP-65), and it charges.
+             Replies are read from there and nowhere else — so every reply below was paid for.
              It also means replies published elsewhere are invisible here. That's the point.
            </div>${renderFeed()}`
         : tab === 'wallet'
@@ -366,6 +370,21 @@ function render() {
 }
 
 // ─── wiring ──────────────────────────────────────────────────────
+
+/**
+ * Store an NWC connection string and restart.
+ *
+ * Validated before it is stored. An unparsable string would otherwise come back as a broken
+ * wallet on every load, with nothing on screen saying why — and a mistyped paste or a QR that
+ * turns out to hold something else both land here.
+ */
+function connectNwc(uri: string): void {
+  const trimmed = uri.trim();
+  if (!trimmed) return;
+  parseNwcUri(trimmed); // throws; withStatus shows the reason
+  setNwc(trimmed);
+  location.reload();
+}
 
 function findEvent(rootId: string, id: string): Event | null {
   const tree = threads.get(rootId);
@@ -420,13 +439,20 @@ function wire() {
 
   const save = app.querySelector<HTMLButtonElement>('#nwc-save');
   if (save)
-    save.onclick = () => {
-      const v = app.querySelector<HTMLInputElement>('#nwc-input')!.value.trim();
-      if (v) {
-        setNwc(v);
-        location.reload();
-      }
-    };
+    save.onclick = () =>
+      void withStatus('Connecting…', async () =>
+        connectNwc(app.querySelector<HTMLInputElement>('#nwc-input')!.value),
+      );
+
+  const scan = app.querySelector<HTMLButtonElement>('#nwc-scan');
+  if (scan)
+    scan.onclick = () =>
+      void withStatus('Opening the camera…', async () => {
+        const text = await scanQr();
+        if (!text) return; // cancelled
+        app.querySelector<HTMLInputElement>('#nwc-input')!.value = text.trim();
+        connectNwc(text);
+      });
 
   const clear = app.querySelector<HTMLButtonElement>('#nwc-clear');
   if (clear)

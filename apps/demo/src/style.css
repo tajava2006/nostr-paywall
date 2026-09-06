@@ -83,3 +83,8 @@ a:hover { text-decoration: underline; }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
 .dim { color: var(--dim); }
 .small { font-size: 12px; }
+
+/* QR scanner overlay (NWC connect) */
+.scanner { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.88); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; }
+.scanner video { width: min(92vw, 420px); max-height: 62vh; border-radius: 12px; border: 1px solid var(--line); object-fit: cover; background: #000; }
+.scanner p { margin: 0; text-align: center; }
