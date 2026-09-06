@@ -1,0 +1,19 @@
+{
+  "$schema": "https://nsyte.run/schemas/config.schema.json",
+  "fallback": "/index.html",
+  "publishProfile": false,
+  "publishRelayList": true,
+  "publishServerList": true,
+  "relays": [
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://relay.nostr.band",
+    "wss://nostr.hoppe-relay.it.com"
+  ],
+  "servers": [
+    "https://blossom.primal.net",
+    "https://cdn.satellite.earth",
+    "https://nostr.download"
+  ]
+}

@@ -1,91 +1,64 @@
-// The argument. This is why the demo exists.
+// The argument, kept short enough that someone might actually read it.
 
 export const ABOUT_HTML = `
 <div class="card">
-  <h2 style="margin:0 0 10px;font-size:17px">Spam is a routing problem, not a filtering problem</h2>
+  <h2 style="margin:0 0 12px;font-size:17px">Spam is a routing problem</h2>
 
   <p>
-    Nostr has two chronic problems, and they share a root. Accounts are free, so spam is free.
-    And relays run on operator goodwill, so nobody is paid to fight it. The usual answers —
-    LLM filters, web-of-trust — burn <em>more</em> operator resources to solve a problem caused by
-    there being no resources. They also put someone in charge of deciding what you may say.
+    Accounts are free, so spam is free. Relays run on goodwill, so nobody is paid to fight it.
+    Filtering — LLMs, web-of-trust — spends more of the resource that was missing in the first
+    place, and puts someone in charge of what you may say.
+  </p>
+  <p>
+    Charging fixes both, but a subscription can't express it: people run several identities,
+    NIP-17 DMs are signed by a fresh key every time, and the honest price is a fraction of a
+    cent. All three need a <b>bearer</b> payment. Hence: <b>one event, one sat.</b>
   </p>
 
+  <h3 style="font-size:14px;margin:20px 0 6px">Only attention costs money</h3>
   <p>
-    Paid relays fix both at once, but subscriptions can't express what's actually needed.
-    You can't charge a per-account subscription when people run several identities, when
-    NIP-17 DMs are signed by a fresh throwaway key every time, or when the honest price is
-    a fraction of a cent. All three need a <b>bearer</b> payment. So: <b>one event, one sat.</b>
+    Reading is free, and so is a plain note — nobody reads a global feed, so an untagged note
+    reaches no one and can't be spam. A sat is charged when an event <b>puts itself in front of
+    someone</b>: a reply, mention, repost, reaction, DM. The toll is on attention, and attention
+    belongs to whoever is being tagged.
   </p>
 
-  <h3 style="font-size:14px;margin:18px 0 6px">Only attention costs money</h3>
+  <h3 style="font-size:14px;margin:20px 0 6px">The outbox model does the rest</h3>
   <p>
-    Reading is free. Publishing a plain note is free — nobody reads a global feed, so an
-    untagged note reaches no one and cannot be spam. What costs a sat is an event that
-    <b>puts itself in front of someone</b>: a reply, a mention, a repost, a reaction, a DM.
-    The fee is a toll on attention, and attention belongs to the person being tagged.
-  </p>
-
-  <h3 style="font-size:14px;margin:18px 0 6px">Why the outbox model is the whole trick</h3>
-  <p>
-    NIP-65 says: to find what someone <b>wrote</b>, read their <b>write</b> relays; to find what
-    was sent <b>to</b> them, read their <b>read</b> (inbox) relays. That second rule is the one
-    that matters here.
-  </p>
-  <p>
-    The account in this demo lists exactly one inbox relay, and that relay charges. So when a
-    client looks for replies the correct way — <b>in the author's inbox</b> — every reply it finds
-    was paid for. Not "filtered". <b>Structurally unable to be free.</b>
+    NIP-65: to find what someone <b>wrote</b>, read their <b>write</b> relays; to find what was
+    sent <b>to</b> them, read their <b>inbox</b> relays. This account lists one inbox relay, and
+    it charges. So every reply below was paid for — not filtered, but
+    <b>structurally unable to be free</b>.
   </p>
   <p class="dim">
-    Right now, elsewhere on the network, this account has spam replies. Another client notifies
-    about them. This one doesn't show them — not because we filter, but because we never look
-    anywhere the author didn't ask to be reached.
+    This same account has spam replies elsewhere on the network right now, and other clients
+    notify about them. This one doesn't show them: we never look anywhere the author didn't ask
+    to be reached.
   </p>
 
-  <h3 style="font-size:14px;margin:18px 0 6px">You only need one query, if everyone follows the spec</h3>
+  <h3 style="font-size:14px;margin:20px 0 6px">One query is enough</h3>
   <p>
-    A natural worry: a reply to a reply might be published somewhere else, so wouldn't you have
-    to walk each commenter's inbox recursively? No — and it matters that the answer is no.
-    NIP-10 says a reply carries <b>all of its parent's <code>p</code> tags</b> plus the parent's
-    author. So a reply at any depth still tags the root author, and a spec-following client
-    still delivers it to the root author's inbox. One query on one relay returns the whole thread.
+    You might expect to crawl each commenter's inbox recursively. You don't need to: NIP-10 says
+    a reply carries <b>all of its parent's <code>p</code> tags</b>, so a reply at any depth still
+    tags the root author and still lands in their inbox. One query returns the whole thread.
   </p>
   <p>
-    We deliberately do <b>not</b> crawl recursively to catch non-compliant clients. Doing so
-    explodes complexity, and worse, it teaches everyone that "just blast it at a big relay and
-    it gets found anyway." That ends with a handful of large relays holding everything, and with
-    the clients that <em>do</em> follow the spec being blamed for finding less. We'd rather find
-    less and stay correct.
+    We deliberately don't crawl to catch clients that ignore this. That teaches everyone to
+    "just blast it at a big relay" — which ends in a few relays holding everything, and in the
+    clients that follow the spec being blamed for finding less.
   </p>
 
-  <h3 style="font-size:14px;margin:18px 0 6px">Where a reply-to-a-reply actually ends up</h3>
+  <h3 style="font-size:14px;margin:20px 0 6px">Finding less is the feature</h3>
   <p>
-    Suppose someone answers a comment here. That reply is published to the read relays of
-    everyone it tags — which, for a real user, may well include a free relay they chose as
-    their own inbox. So it exists, and it is delivered.
-  </p>
-  <p>
-    Three different things then happen. It does <b>not</b> reach the root author, who never
-    listed that relay. It does <b>not</b> appear in this thread, because a client honouring the
-    outbox model reads the root author's inbox and nowhere else. But it <b>does</b> appear in the
-    <b>reply author's own notifications</b> — that person asked to be reachable there.
-    Everyone got exactly what they asked for.
+    A reply sent somewhere you never asked to be reached, not reaching you, is your preference
+    being honored. Answer a comment here and it goes to the read relays of everyone it tags,
+    which for a real user may be a free relay. It then reaches the <b>reply author's own
+    notifications</b> — but not the root author, and not this thread. Three outcomes, each one
+    what the person concerned asked for.
   </p>
 
-  <h3 style="font-size:14px;margin:18px 0 6px">Finding less is a feature</h3>
-  <p>
-    If a reply doesn't reach you because it was never sent where you said to reach you, that isn't
-    a bug — that is the recipient's stated preference being honored. In the same spirit, some
-    clients let you drop ancestor <code>p</code> tags when replying deep in a thread. Read that
-    literally: <em>notify my direct parent, not everyone above.</em> That's a legitimate choice,
-    and a client should respect it rather than route around it.
-  </p>
-
-  <h3 style="font-size:14px;margin:18px 0 6px">What this demo is not</h3>
-  <p>
-    A proof of concept. Unaudited. The price here is symbolic — 1 sat is a mechanism, not a
-    deterrent. And paid writes buy <b>spam resistance</b>, not infrastructure: a relay's real
-    cost is read bandwidth, and reading stays free. We're not claiming otherwise.
+  <p class="dim small" style="margin-top:20px">
+    Proof of concept, unaudited. 1 sat is a mechanism, not a deterrent. And paid writes buy spam
+    resistance, not infrastructure — a relay's real cost is read bandwidth, which stays free.
   </p>
 </div>`;
