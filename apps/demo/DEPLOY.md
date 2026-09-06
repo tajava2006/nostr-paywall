@@ -16,16 +16,27 @@ deno install -A -f -g -n nsyte jsr:@nsyte/cli     # or a release binary
 nsyte bunker connect                              # interactive; or pass a bunker:// URL
 ```
 
+Run it from `apps/demo`, so the bunker pubkey lands in that project's config.
+
+**Do not run `nsyte init` here.** It is the interactive wizard that *writes* `.nsite/config.json`,
+and rerunning it would overwrite two deliberate settings: `fallback` (without it a deep link
+404s on this single-page app) and `publishProfile: false` (which stops a deploy from
+overwriting the signing key's kind 0 — it's your main identity).
+
 The bunker pubkey lands in `.nsite/config.json`, so it is safe to commit — the key itself never
 leaves your signer.
 
 ## Deploy
 
 ```sh
-pnpm -F @nostr-paywall/demo deploy
+pnpm -F @nostr-paywall/demo deploy:nsite
 ```
 
-That builds and uploads `dist/`. The site is then served at `<pubkeyB36>.<gateway>`.
+That builds and uploads `dist/`.
+
+The script is **not** called `deploy`: `pnpm deploy` is a built-in command (it copies a
+workspace package into a directory) and shadows any script of that name, so plain
+`pnpm -F … deploy` fails with `ERR_PNPM_INVALID_DEPLOY_TARGET`. The site is then served at `<pubkeyB36>.<gateway>`.
 
 ## Notes
 

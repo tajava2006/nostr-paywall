@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "deploy": "pnpm build && nsyte deploy ./dist"
+    "deploy:nsite": "pnpm build && nsyte deploy ./dist"
   },
   "dependencies": {
     "@nostr-paywall/client": "workspace:*",
