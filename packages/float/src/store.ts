@@ -26,12 +26,22 @@ export interface FloatState {
   version: 1;
   /** 민트 URL → 보유 proofs. 민트별로 분리 — 토큰은 민트를 넘나들 수 없다. */
   mints: Record<string, MintBucket>;
-  /** 충전 이력. 기간 한도 계산용. */
+  /** 충전 이력. 기간 한도 계산용이자 UI 표시용. */
   topUps: { at: number; sats: number }[];
+  /** 지출 이력. "언제 어느 릴레이의 어느 이벤트에 얼마 썼는지" — UI 가 보여줄 유일한 근거다. */
+  spends?: SpendRecord[];
+}
+
+export interface SpendRecord {
+  at: number;
+  mint: string;
+  sats: number;
+  eventId: string;
+  relayUrl: string;
 }
 
 export function emptyState(): FloatState {
-  return { version: 1, mints: {}, topUps: [] };
+  return { version: 1, mints: {}, topUps: [], spends: [] };
 }
 
 export interface FloatStore {

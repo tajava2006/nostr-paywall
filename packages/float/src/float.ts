@@ -14,6 +14,7 @@ import {
   type FloatStore,
   type MintBucket,
   type PendingSpend,
+  type SpendRecord,
 } from './store.js';
 
 // cashu-ts 는 ESM 전용이라 CJS 소비자를 위해 런타임 값만 지연 로딩한다
@@ -192,6 +193,16 @@ export class EcashFloat {
       const token = getEncodedToken({ mint, unit: 'sat', proofs: send });
 
       b.proofs = keep as Proof[];
+      state.spends ??= [];
+      state.spends.push({
+        at: Date.now(),
+        mint,
+        sats: amountSats,
+        eventId: ctx.eventId,
+        relayUrl: ctx.relayUrl,
+      });
+      // 무한히 쌓이지 않게 최근 것만 남긴다. 회계가 아니라 표시용이다.
+      if (state.spends.length > 500) state.spends = state.spends.slice(-500);
       b.pending.push({
         token,
         proofs: send as Proof[],
@@ -201,6 +212,18 @@ export class EcashFloat {
       });
       return { v: 1, method: 'cashu', mint, unit: 'sat', token } satisfies PaymentEnvelope;
     });
+  }
+
+  /** 지출 이력(최근 것부터 오래된 순). UI 표시용. */
+  async spendHistory(): Promise<SpendRecord[]> {
+    const state = (await this.opts.store.load()) ?? emptyState();
+    return state.spends ?? [];
+  }
+
+  /** 충전 이력. */
+  async topUpHistory(): Promise<{ at: number; sats: number }[]> {
+    const state = (await this.opts.store.load()) ?? emptyState();
+    return state.topUps;
   }
 
   /** 릴레이가 확실히 받았다. pending 에서 제거한다. */
